@@ -462,16 +462,21 @@ function teacherEmailLogin_(body) {
   return teacherSession_(acc);
 }
 function teacherLogin_(body) {
-  if (body.email !== undefined && !body.code) return teacherEmailLogin_(body);
+  if (body.email !== undefined && !body.code) return teacherEmailLogin_(body);   // 두 번째부터: 이메일 + 비밀번호
   const code = String(body.code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   const raw = code && props_().getProperty('TCODE_' + code);
   let info = null; try { info = raw ? JSON.parse(raw) : null; } catch (e) { info = null; }
   if (!info || info.exp < Date.now()) return fail_('bad_code', code.length === 8 ? '교사 접속 코드가 맞지 않거나 만료됐어요. 시트 메뉴 ⑧에서 다시 발급해 보세요' : '교사 접속 코드는 8자리예요 (예: AB12-CD34). 시트 메뉴 ⑧에서 발급하세요');
   const acc = account_('T:' + info.email); if (!acc) return fail_('not_teacher', '승인된 교사가 아니에요. 관리자에게 등록을 요청하세요');
-  return teacherSession_(acc);
+  // 처음 등록: 코드 + 이메일 + 비밀번호 → 이메일이 코드의 계정과 같아야 하고, 비밀번호를 저장해 둔다
+  const email = String(body.email || '').trim().toLowerCase();
+  if (email && email !== String(info.email).toLowerCase()) return fail_('email_mismatch', '이 코드는 ' + info.email + ' 계정의 코드예요. 그 이메일을 넣어 주세요');
+  let pwSet = false;
+  if (body.password !== undefined) { const r = teacherSetPassword_(acc, body); if (!r.ok) return r; pwSet = true; }
+  return Object.assign(teacherSession_(acc), { pwSet });
 }
 function teacherSession_(acc) {
-  return { ok: true, token: makeToken_(acc.id), id: acc.id, name: acc.name, teacher: true, state: loadState_(acc, false), units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), items: loadItems_(), inbox: { knocks: [], stickers: [] } };
+  return { ok: true, token: makeToken_(acc.id), id: acc.id, name: acc.name, teacher: true, admin: isAdminAcc_(acc), state: loadState_(acc, false), units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), items: loadItems_(), inbox: { knocks: [], stickers: [] } };
 }
 
 function register_(body, today) {
@@ -513,6 +518,47 @@ function register_(body, today) {
     return { ok: true, token: makeToken_(id), name, state, units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), items: loadItems_(), inbox: { knocks: [], stickers: [] } };
   } finally { lock.releaseLock(); }
 }
+/* ======================= 교사 관리 (관리자 = 시트 소유자 · 앱 교사 탭) ======================= */
+function isAdminAcc_(acc) { try { return !!acc && !!acc.teacher && String(acc.id).slice(2).toLowerCase() === ownerEmail_().toLowerCase(); } catch (e) { return false; } }
+function teacherRows6_() {
+  const sh = sheet_(SHEETS.teachers, TEACHER_HEADER);
+  if (sh.getLastColumn() < 6) sh.getRange(1, 5, 1, 2).setValues([['비밀번호해시', '솔트']]);
+  const n = sh.getLastRow();
+  return { sh, rows: n > 1 ? sh.getRange(2, 1, n - 1, 6).getValues() : [], n };
+}
+function teacherList_(acc) {
+  if (!isAdminAcc_(acc)) return fail_('forbidden', '관리자(시트 소유자)만 볼 수 있어요');
+  const { rows } = teacherRows6_();
+  const list = rows.filter(r => String(r[0]).trim()).map(r => ({ email: String(r[0]).trim().toLowerCase(), name: String(r[1] || ''), approved: r[2] === true,
+    created: r[3] instanceof Date ? todayKey_(r[3]) : String(r[3] || ''), hasPw: !!r[4] }));
+  return { ok: true, owner: ownerEmail_().toLowerCase(), teachers: list };
+}
+function saveTeachers_(acc, body) {
+  if (!isAdminAcc_(acc)) return fail_('forbidden', '관리자(시트 소유자)만 바꿀 수 있어요');
+  const list = Array.isArray(body.teachers) ? body.teachers : [];
+  const { sh, rows, n } = teacherRows6_();
+  const seen = {}, out = [];
+  for (const t of list) {
+    const email = String(t.email || '').trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail_('bad_email', '이메일 형식을 확인해 주세요: ' + email);
+    if (seen[email]) continue; seen[email] = 1;
+    const old = rows.find(r => String(r[0]).trim().toLowerCase() === email);
+    let hash = old ? old[4] : '', salt = old ? old[5] : '';
+    const pw = String(t.initPassword || '');
+    if (pw) { if (pw.length < 6 || pw.length > 40) return fail_('bad_pw', email + ': 초기 비밀번호는 6자 이상이에요'); salt = Utilities.getUuid(); hash = hash_(salt, pw); }
+    const approved = t.approved === true;
+    out.push([email, String(t.name || '').trim().slice(0, 20), approved, old && old[3] ? old[3] : todayKey_(), hash, salt]);
+    if (approved && !(old && old[2] === true)) { try { folder_().addEditor(email); } catch (e) { /* 폴더 공유 실패는 무시 (수동 공유 가능) */ } }
+  }
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return fail_('busy', '지금 접속이 많아요. 잠시 후 다시 시도해 주세요');
+  try {
+    if (n > 1) sh.getRange(2, 1, n - 1, 6).clearContent();
+    if (out.length) { sh.getRange(2, 1, out.length, 6).setValues(out); sh.getRange(2, 3, out.length, 1).insertCheckboxes(); sh.getRange(2, 1, out.length, 2).setNumberFormat('@'); }
+  } finally { lock.releaseLock(); }
+  return teacherList_(acc);
+}
+
 /* ======================= 지난 학번 자료 (학생 본인이 지난 학번+비밀번호로 연결) ======================= */
 const PAST_HEADER = ['학번', '이름', '비밀번호해시', '솔트', '파일ID', '학년도', '보관일'];
 function linkPast_(acc, body, today) {
@@ -935,6 +981,8 @@ function doPost(e) {
       }
       case 'changePassword': return json_(changePassword_(acc, body));
       case 'teacherSetPassword': return json_(teacherSetPassword_(acc, body));   // 교사: 이메일 로그인용 비밀번호
+      case 'teachers': return json_(teacherList_(acc));                 // 관리자 전용
+      case 'saveTeachers': return json_(saveTeachers_(acc, body));       // 관리자 전용
       case 'linkPast': return json_(linkPast_(acc, body, today));          // 학생: 지난 학번 연결
       case 'pastView': return json_(pastView_(acc, body));                // 학생: 지난 학번 자료 보기
       case 'classmates': return json_(classmates_(acc));

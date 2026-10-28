@@ -127,6 +127,7 @@ window.addEventListener('online', () => API.kick());
 function nowHour() { return new Date(Date.now() + serverOffset).getHours(); }
 function inRange(h, s, e) { return s < e ? (h >= s && h < e) : (h >= s || h < e); }
 function isTeacher() { const s = MODE === 'server' && API.getSession(); return !!(s && s.teacher); }   // 교사는 시간 제한 없음
+function isAdmin() { const s = MODE === 'server' && API.getSession(); return !!(s && s.teacher && s.admin); }   // 관리자 = 시트 소유자
 function isNightLocked() { const c = CONFIG.nightLock; return c.enabled && !serverSettings.nightLockOff && !isTeacher() && !(state && state.settings.bypassLock) && inRange(nowHour(), c.start, c.end); }
 function isClassLocked() { const c = serverSettings.classLock || CONFIG.classLock; return !!c.enabled && !isTeacher() && !(state && state.settings.bypassLock) && inRange(nowHour(), Number(c.start), Number(c.end)); }
 function checkLocks() {
@@ -178,12 +179,14 @@ function renderLogin(mode = 'login', msg = '') {
         <label>교사 이메일 <input id="f-email" type="email" placeholder="예: teacher@school.kr" maxlength="80" autocomplete="username" value="${esc(localStorage.getItem('studyroom_temail') || '')}"></label>
         <label>교사 비밀번호 <input id="f-tpw" type="password" maxlength="40" autocomplete="current-password"></label>
         <button id="f-go" class="btn primary big">교사로 들어가기</button>
-        <p class="small" style="margin-top:10px"><button class="link" id="f-usecode">처음이거나 비밀번호를 잊었어요 → 접속 코드로 들어가기</button></p>
+        <p class="small" style="margin-top:10px"><button class="link" id="f-usecode">처음이거나 비밀번호를 잊었어요 → 접속 코드로 등록하기</button></p>
       </div>
       <div id="f-tcode" class="hidden">
+        <p class="muted small">처음 한 번만 <b>접속 코드 + 이메일 + 비밀번호</b>를 넣어요. 다음부터는 이메일과 비밀번호만 넣으면 돼요. 코드는 스터디룸 DB 시트의 <b>🏠 스터디룸 → ⑧ 내 교사 접속 코드 보기</b>에서 받아요.</p>
         <label>교사 접속 코드 <input id="f-code" type="text" placeholder="예: AB12-CD34 (8자리)" maxlength="20" autocomplete="off"></label>
-        <button id="f-go2" class="btn primary big">코드로 들어가기</button>
-        <p class="muted small" style="margin-top:8px">들어간 뒤 <b>교사 탭 → 🔑 교사 비밀번호</b>에서 비밀번호를 정하면 다음부터는 이메일로 바로 들어와요.</p>
+        <label>교사 이메일 (코드를 받은 구글 계정) <input id="f-email2" type="email" placeholder="예: teacher@school.kr" maxlength="80" autocomplete="username" value="${esc(localStorage.getItem('studyroom_temail') || '')}"></label>
+        <label>앞으로 쓸 비밀번호 (6자 이상) <input id="f-pw-new" type="password" maxlength="40" autocomplete="new-password"></label>
+        <button id="f-go2" class="btn primary big">등록하고 들어가기</button>
         <p class="small" style="margin-top:10px"><button class="link" id="f-usemail">← 이메일로 들어가기</button></p>
       </div>
       <p class="small" style="margin-top:12px"><button class="link" id="f-back">← 학생 로그인</button></p>`;
@@ -192,7 +195,14 @@ function renderLogin(mode = 'login', msg = '') {
     $('#f-usemail').onclick = () => { $('#f-tcode').classList.add('hidden'); $('#f-tmail').classList.remove('hidden'); };
     $('#f-go').onclick = () => { const email = $('#f-email').value.trim().toLowerCase(); try { localStorage.setItem('studyroom_temail', email); } catch (e) { /* ignore */ } auth('teacherLogin', { email, password: $('#f-tpw').value }); };
     $('#f-tpw').onkeydown = e => { if (e.key === 'Enter') $('#f-go').click(); };
-    $('#f-go2').onclick = () => auth('teacherLogin', { code: $('#f-code').value.trim() }, '#f-go2');
+    $('#f-go2').onclick = () => {
+      const code = $('#f-code').value.trim(), email = $('#f-email2').value.trim().toLowerCase(), password = $('#f-pw-new').value;
+      if (!code) return toast('교사 접속 코드를 입력해 주세요', 'bad');
+      if (!email) return toast('교사 이메일을 입력해 주세요', 'bad');
+      if (password.length < 6) return toast('비밀번호는 6자 이상이에요', 'bad');
+      try { localStorage.setItem('studyroom_temail', email); } catch (e) { /* ignore */ }
+      auth('teacherLogin', { code, email, password }, '#f-go2');
+    };
   } else {
     body.innerHTML = `<h2>👋 처음 만들기</h2>
       <div class="notice">학번·이름·비밀번호와 학습 기록은 <b>선생님이 지정한 학교 폴더에만</b> 저장되고 외부로 전송되지 않아요. 비밀번호는 암호화되어 저장돼요.</div>
@@ -214,7 +224,7 @@ function renderLogin(mode = 'login', msg = '') {
 }
 async function auth(action, payload, btnSel = '#f-go') {
   const mode = action === 'teacherLogin' ? 'teacher' : action;
-  if (action === 'teacherLogin' && !payload.code && !(payload.email && payload.password)) return toast(payload.email !== undefined ? '이메일과 비밀번호를 입력해 주세요' : '교사 접속 코드를 입력해 주세요', 'bad');
+  if (action === 'teacherLogin' && !payload.code && !(payload.email && payload.password)) return toast('이메일과 비밀번호를 입력해 주세요', 'bad');
   if (action !== 'teacherLogin' && !payload.id) return toast('학번을 입력해 주세요', 'bad');
   if (action === 'register' && !payload.name) return toast('이름을 입력해 주세요', 'bad');
   $(btnSel).disabled = true; $(btnSel).textContent = '확인 중...';
@@ -229,12 +239,12 @@ async function auth(action, payload, btnSel = '#f-go') {
       }
       return renderLogin(mode, msg);
     }
-    API.setSession({ token: r.token, id: r.id || payload.id, name: r.name, teacher: !!r.teacher });
+    API.setSession({ token: r.token, id: r.id || payload.id, name: r.name, teacher: !!r.teacher, admin: !!r.admin });
     setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) { serverSettings = r.settings; applyPricing(r.settings.prices); applyItemPrices(r.settings.itemPrices); } if (r.items) applyItems(r.items); state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
     $('#overlay-login').classList.add('hidden');
     if (r.mustChange) changePasswordModal(true);
     start();
-    toast(`${r.name}님, 환영해요!`, 'ok');
+    toast(r.pwSet ? `${r.name}님, 등록했어요! 다음부터는 이메일과 비밀번호로 들어오세요` : `${r.name}님, 환영해요!`, 'ok');
   } catch (e) {
     renderLogin(mode, e.message === 'busy' ? '지금 접속이 많아요. 잠시 후 다시 시도해 주세요.' : '서버에 연결할 수 없어요. 인터넷을 확인해 주세요.');
   }
@@ -807,11 +817,12 @@ let tAdmin = { settings: null, coupons: null, unitId: null, topicId: null, quest
 async function renderTeacherServer(body) {
   body.innerHTML = `
     <div class="card" style="background:#eef6ff"><h3>👩‍🏫 교사로 접속 중</h3><p class="small">심야·수업 시간 잠금이 적용되지 않고 코인은 무제한이에요. 친구 방 탭에서 모든 학생의 방과 학습자료를 볼 수 있어요. 이 계정의 방은 시험용이라 평가기록부에 들어가지 않아요.</p></div>
-    <div class="card"><h3>🔑 교사 비밀번호 <small class="muted">— 정해 두면 접속 코드 없이 이메일로 들어와요</small></h3>
+    <div class="card"><h3>🔑 교사 비밀번호 바꾸기 <small class="muted">— 이메일 로그인에 쓰는 비밀번호</small></h3>
       <div class="field-row"><label style="flex:1 1 160px">새 비밀번호 (6자 이상) <input type="password" id="t-pw1" maxlength="40" autocomplete="new-password"></label><label style="flex:1 1 160px">한 번 더 <input type="password" id="t-pw2" maxlength="40" autocomplete="new-password"></label><button class="btn primary" id="t-pw-save" style="margin-bottom:1px">저장</button></div>
       <p class="muted small">내 이메일: <b>${esc((API.getSession() || {}).id || '').replace(/^T:/, '')}</b> · 비밀번호는 암호화되어 교사 시트에 저장돼요. 잊으면 시트 메뉴 ⑧의 접속 코드로 들어와 다시 정하면 돼요.</p></div>
     <div class="card" id="t-settings"><h3>⚙️ 설정</h3><p class="muted small">불러오는 중...</p></div>
     <div class="card"><h3>🪙 코인 일괄 지급</h3><p class="muted small">전체 학생 또는 학번 목록에 코인을 한 번에 더해요. (학급 협동 미션 달성, 행사 보상 등)</p><div class="btn-row" style="align-items:flex-end"><label style="margin:0;width:120px">금액 <input type="number" id="t-grant-amt" min="1" max="10000" value="100"></label><label style="margin:0;flex:1;min-width:220px">대상 학번 <input type="text" id="t-grant-ids" placeholder="비우면 전체 학생 · 여러 명은 쉼표로 (예: 10301, 10302)" autocomplete="off"></label><button class="btn primary" id="t-grant">지급</button></div></div>
+    ${isAdmin() ? '<div class="card" id="t-teachers" style="background:#fff7ed"><h3>👩‍🏫 교사 등록·승인</h3><p class="muted small">불러오는 중...</p></div>' : ''}
     <div class="card" id="t-events"><h3>🎉 이벤트 관리</h3></div>
     <div class="card"><h3>🧪 테스트 자료 넣기</h3><p class="muted small">학번을 넣고 누르면 그 학생에게 한 단원의 성취기준을 모두 통과한 기록이 들어가요. 학생 서재의 <b>개념도 액자 만들기</b>를 바로 시험할 수 있어요. (실제 학생에게는 쓰지 마세요)</p><div class="btn-row"><input type="text" id="t-seed-id" inputmode="numeric" placeholder="학번 (예: 7777)" style="max-width:160px" autocomplete="off"><button class="btn" id="t-seed">단원 통과 기록 넣기</button></div></div>
     <div class="card"><h3>📝 문항 · 🎟️ 쿠폰 · ✅ 승인은 어디서?</h3><p class="small">형성평가 문항은 <b>학습하기 탭</b>에서 성취기준을 열면 형성평가 아래에 편집기가 나와요. 쿠폰 편집과 쿠폰·사진 액자 승인은 <b>상점 탭</b> 위에 있어요.</p></div>
@@ -819,15 +830,16 @@ async function renderTeacherServer(body) {
       <li><b>사진·쿠폰 승인</b>: 승인요청 시트의 승인 체크박스를 켜면 학생이 다음 접속 때 반영돼요. (즉시 반영은 메뉴 ④)</li>
       <li><b>평가기록부</b>: 행=학번, 열=날짜. 10분마다 자동 갱신돼요. (즉시 갱신은 메뉴 ③)</li>
       <li><b>단원·핵심 개념·오개념</b>: 단원 시트. 문항은 문항 시트 또는 아래 문항 관리에서 고쳐요.</li>
-      <li><b>교사 추가</b>: 관리자가 메뉴 ⑥ / <b>학생 비밀번호 초기화</b>: 메뉴 ⑤ / <b>백업</b>: 드라이브 폴더 사본</li>
+      <li><b>교사 추가</b>: 관리자는 위 교사 등록·승인 칸(또는 메뉴 ⑥) / <b>학생 비밀번호 초기화</b>: 메뉴 ⑤ / <b>백업</b>: 드라이브 폴더 사본</li>
       <li><b>코드 수정</b>: 앱은 git push, 서버는 <code>npm run server</code> 한 줄로 자동 배포돼요. Apps Script 편집기는 열지 않아도 돼요.</li></ul></div>`;
   try {
     const r = await API.call({ action: 'getSettings' }); if (!r.ok) throw new Error(r.message || r.error);
     tAdmin.settings = r.settings; renderTSettings();
   } catch (e) { $('#t-settings').innerHTML = '<h3>⚙️ 설정</h3><p class="muted small">불러오지 못했어요: ' + esc(e.message) + '</p>'; }
   tAdmin.events = events.map(e => Object.assign({}, e, { itemIds: (e.itemIds || []).slice() })); renderTEvents();
+  if (isAdmin()) loadTTeachers();
   $('#t-grant').onclick = async () => {
-    const amount = Number($('#t-grant-amt').value); const ids = $('#t-grant-ids').value.split(/[s,]+/).map(x => x.trim()).filter(Boolean);
+    const amount = Number($('#t-grant-amt').value); const ids = $('#t-grant-ids').value.split(/[\s,]+/).map(x => x.trim()).filter(Boolean);
     if (!(amount >= 1)) return toast('금액을 입력해 주세요', 'bad');
     if (!confirm((ids.length ? ids.length + '명' : '전체 학생') + '에게 🪙 ' + amount + '씩 지급할까요?')) return;
     const r = await API.call({ action: 'grantCoins', amount, ids }, { timeout: 120000 }).catch(() => ({ ok: false, message: '연결 실패' }));
@@ -1108,6 +1120,38 @@ async function renderTeacherLibrary() {
   $('#tl-refresh').onclick = () => { tLib.rows = null; renderTeacherLibrary(); };
 }
 
+/* ---------------- 관리자: 교사 등록·승인 ---------------- */
+async function loadTTeachers() {
+  const box = $('#t-teachers'); if (!box) return;
+  const r = await API.call({ action: 'teachers' }).catch(() => ({ ok: false, message: '연결 실패' }));
+  if (!r.ok) { box.innerHTML = '<h3>👩‍🏫 교사 등록·승인</h3><p class="muted small">' + esc(r.message || '불러오지 못했어요') + '</p>'; return; }
+  tAdmin.owner = r.owner; tAdmin.teachers = r.teachers.map(t => Object.assign({ initPassword: '' }, t)); renderTTeachers();
+}
+function renderTTeachers() {
+  const box = $('#t-teachers'); if (!box) return;
+  const list = tAdmin.teachers;
+  box.innerHTML = `<h3>👩‍🏫 교사 등록·승인 <small class="muted">— 관리자(시트 소유자)에게만 보여요</small></h3>
+    <p class="muted small">이메일과 이름을 넣고 <b>승인</b>을 켜면 그 선생님이 교사로 들어올 수 있어요. <b>초기 비밀번호</b>를 정해 주면 접속 코드 없이 이메일+비밀번호로 바로 들어오고, 비워 두면 선생님이 접속 코드로 처음 등록해요. 승인하면 학교 폴더도 함께 공유돼요.</p>
+    <div class="sheet-wrap"><table class="sheet"><thead><tr><th>이메일</th><th>이름</th><th>승인</th><th>초기 비밀번호</th><th></th></tr></thead><tbody>
+    ${list.map((t, i) => { const own = t.email === tAdmin.owner; return `<tr><td><input type="text" data-i="${i}" data-k="email" value="${esc(t.email)}" maxlength="80" placeholder="teacher@school.kr" ${own ? 'disabled' : ''}></td>
+      <td><input type="text" data-i="${i}" data-k="name" value="${esc(t.name)}" maxlength="20" placeholder="이름"></td>
+      <td style="text-align:center"><input type="checkbox" data-i="${i}" data-k="approved" ${t.approved ? 'checked' : ''} ${own ? 'disabled' : ''}>${own ? ' <small class="muted">관리자</small>' : ''}</td>
+      <td><input type="password" data-i="${i}" data-k="initPassword" value="${esc(t.initPassword || '')}" maxlength="40" autocomplete="new-password" placeholder="${t.hasPw ? '설정됨 (바꾸려면 입력)' : '없음 (6자 이상)'}"></td>
+      <td>${own ? '' : `<button class="btn tiny danger tt-del" data-i="${i}">삭제</button>`}</td></tr>`; }).join('')}
+    </tbody></table></div>
+    ${list.length ? '' : '<p class="muted small">등록된 교사가 없어요.</p>'}
+    <div class="btn-row"><button class="btn" id="tt-add">+ 교사 추가</button><button class="btn primary" id="tt-save">교사 저장</button></div>`;
+  const sync = () => $$('#t-teachers [data-k]').forEach(el => { const t = list[+el.dataset.i]; if (!t) return; const k = el.dataset.k; if (k === 'approved') t.approved = el.checked; else t[k] = el.value; });
+  $$('.tt-del').forEach(b => b.onclick = () => { sync(); const t = list[+b.dataset.i]; if (!confirm((t.email || '이 교사') + ' 을(를) 교사 목록에서 지울까요? 그 선생님은 더 이상 교사로 들어올 수 없어요.')) return; list.splice(+b.dataset.i, 1); renderTTeachers(); });
+  $('#tt-add').onclick = () => { sync(); list.push({ email: '', name: '', approved: true, initPassword: '', hasPw: false }); renderTTeachers(); };
+  $('#tt-save').onclick = async () => {
+    sync();
+    const teachers = list.filter(t => (t.email || '').trim()).map(t => ({ email: t.email.trim().toLowerCase(), name: t.name, approved: !!t.approved, initPassword: t.initPassword || '' }));
+    const r = await API.call({ action: 'saveTeachers', teachers }).catch(() => ({ ok: false, message: '연결 실패' }));
+    if (r.ok) { tAdmin.teachers = r.teachers.map(t => Object.assign({ initPassword: '' }, t)); toast(`교사 ${r.teachers.length}명을 저장했어요`, 'ok'); renderTTeachers(); }
+    else toast(r.message || '저장에 실패했어요', 'bad');
+  };
+}
 /* ---------------- 교사: 비밀번호 설정 ---------------- */
 document.addEventListener('click', async e => {
   if (!e.target || e.target.id !== 't-pw-save') return;
