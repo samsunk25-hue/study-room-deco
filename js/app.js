@@ -14,6 +14,13 @@ let state = null, topics = [], units = [], currentRoomId = null, serverOffset = 
 let coupons = CONFIG.coupons.slice();   // 서버 모드에서는 쿠폰 시트 내용으로 교체됨
 let events = Engine.defaultEvents();    // 서버 모드에서는 이벤트 시트 내용으로 교체됨
 let serverSettings = { nightLockOff: false, classLock: Object.assign({}, CONFIG.classLock) };   // 교사가 앱에서 바꾸는 공개 설정
+function applyPricing(p) {   // 서버에서 받은 가격·보상을 CONFIG 에 반영 (표시와 즉시 적용 계산이 서버와 같아지도록)
+  if (!p) return;
+  CONFIG.shopPrice = { common: p.common, rare: p.rare, epic: p.epic };
+  CONFIG.recolorCost = p.recolor; CONFIG.restyleCost = p.restyle; CONFIG.wallpaperCost = p.wallpaper; ITEMS.photo_frame.cost = p.photoFrame;
+  CONFIG.rewards = Object.assign({}, CONFIG.rewards, { conceptCoin: p.conceptCoin, quizCoin: p.quizCoin, passCoin: p.passCoin, firstTryBonus: p.firstTryBonus, monsterBonus: p.monsterBonus });
+  CONFIG.sticker = Object.assign({}, CONFIG.sticker, { coin: p.stickerCoin });
+}
 let myRoom = null, visitRoom = null;
 let study = { step: 'units' };
 let teacherOpen = false;
@@ -93,7 +100,7 @@ async function dispatch(cmd, interactive = false) {
 async function reloadFromServer() {
   try {
     const r = await API.call({ action: 'load' });
-    if (r.ok) { if (r.units) setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) serverSettings = r.settings; state = Engine.migrate(r.state, units); inbox = r.inbox || inbox; updateHeader(); checkLocks(); refreshCurrent(); }
+    if (r.ok) { if (r.units) setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) { serverSettings = r.settings; applyPricing(r.settings.prices); } state = Engine.migrate(r.state, units); inbox = r.inbox || inbox; updateHeader(); checkLocks(); refreshCurrent(); }
     else handleServerError(r);
   } catch (e) { /* 다음 기회에 */ }
 }
@@ -205,7 +212,7 @@ async function auth(action, payload) {
       return renderLogin(mode, msg);
     }
     API.setSession({ token: r.token, id: r.id || payload.id, name: r.name, teacher: !!r.teacher });
-    setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) serverSettings = r.settings; state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
+    setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) { serverSettings = r.settings; applyPricing(r.settings.prices); } state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
     $('#overlay-login').classList.add('hidden');
     if (r.mustChange) changePasswordModal(true);
     start();
@@ -393,7 +400,7 @@ async function answerKnock(visitorId, allow) {
 async function pollInbox() {
   if (MODE !== 'server' || !state) return;
   if (isTeacher()) return pollOnline();
-  try { const r = await API.call({ action: 'inbox' }); if (r.ok) { inbox = r.inbox; if (r.settings) { serverSettings = r.settings; checkLocks(); } if ($('#screen-room').classList.contains('active')) renderInbox(); } } catch (e) { /* ignore */ }
+  try { const r = await API.call({ action: 'inbox' }); if (r.ok) { inbox = r.inbox; if (r.settings) { serverSettings = r.settings; applyPricing(r.settings.prices); checkLocks(); } if ($('#screen-room').classList.contains('active')) renderInbox(); } } catch (e) { /* ignore */ }
 }
 
 /* ---------------- 학습하기 ---------------- */
@@ -830,11 +837,16 @@ function renderTSettings() {
     <label class="toggle"><input type="checkbox" id="ts-class" ${s.classLock && s.classLock.enabled ? 'checked' : ''}> 수업 시간 방 꾸미기 잠금 (이 시간에는 학습하기만 가능)</label>
     <div style="display:flex;gap:8px;align-items:center;margin:0 0 10px 26px" class="small">잠금 시간 <input type="number" id="ts-cstart" min="0" max="23" value="${s.classLock ? s.classLock.start : 9}" style="width:70px"> 시 ~ <input type="number" id="ts-cend" min="1" max="24" value="${s.classLock ? s.classLock.end : 16}" style="width:70px"> 시 <span class="muted">(예: 9 ~ 16)</span></div>
     <label>가입 코드 <input type="text" id="ts-join" value="${esc(s.joinCode)}" placeholder="비우면 누구나 가입할 수 있어요" maxlength="40"></label>
+    <div class="row-label" style="margin-top:12px">💰 가격 (코인)</div>
+    <div class="chips">${[['common','일반 가구'],['rare','레어 가구'],['epic','에픽 가구'],['recolor','색상 리폼'],['restyle','스타일 리폼'],['wallpaper','벽지·바닥'],['photoFrame','사진 액자']].map(([k, n]) => `<label class="small" style="display:flex;align-items:center;gap:4px;margin:0">${n} <input type="number" min="0" data-price="${k}" value="${(s.prices || {})[k] ?? ''}" style="width:76px;padding:6px 8px"></label>`).join('')}</div>
+    <div class="row-label" style="margin-top:8px">🎁 보상 (코인)</div>
+    <div class="chips">${[['conceptCoin','개념 1개 열림'],['quizCoin','퀴즈 정답 1개'],['passCoin','요약 통과'],['firstTryBonus','첫 시도 통과'],['monsterBonus','괴물 정화'],['stickerCoin','영감 스티커']].map(([k, n]) => `<label class="small" style="display:flex;align-items:center;gap:4px;margin:0">${n} <input type="number" min="0" data-price="${k}" value="${(s.prices || {})[k] ?? ''}" style="width:76px;padding:6px 8px"></label>`).join('')}</div>
     <div class="btn-row"><button class="btn primary" id="ts-save">설정 저장</button></div>`;
   $('#ts-save').onclick = async () => {
-    const settings = { nightLockOff: $('#ts-night').checked, eventForce: $('#ts-event').checked, joinCode: $('#ts-join').value.trim(), classLock: { enabled: $('#ts-class').checked, start: Number($('#ts-cstart').value), end: Number($('#ts-cend').value) } };
+    const prices = {}; $$('#t-settings input[data-price]').forEach(i => { if (i.value !== '') prices[i.dataset.price] = Number(i.value); });
+    const settings = { nightLockOff: $('#ts-night').checked, eventForce: $('#ts-event').checked, joinCode: $('#ts-join').value.trim(), classLock: { enabled: $('#ts-class').checked, start: Number($('#ts-cstart').value), end: Number($('#ts-cend').value) }, prices };
     const r = await API.call({ action: 'saveSettings', settings }).catch(() => ({ ok: false, message: '연결 실패' }));
-    if (r.ok) { tAdmin.settings = r.settings; serverSettings = { nightLockOff: r.settings.nightLockOff, classLock: r.settings.classLock }; checkLocks(); toast('설정을 저장했어요. 학생에게는 다음 접속·1분 내 반영돼요', 'ok'); } else toast(r.message || '실패했어요', 'bad');
+    if (r.ok) { tAdmin.settings = r.settings; serverSettings = { nightLockOff: r.settings.nightLockOff, classLock: r.settings.classLock, prices: r.settings.prices }; applyPricing(r.settings.prices); checkLocks(); toast('설정을 저장했어요. 가격은 바로, 학생에게는 1분 내 반영돼요', 'ok'); } else toast(r.message || '실패했어요', 'bad');
   };
 }
 function renderTCoupons() {
@@ -1021,7 +1033,7 @@ async function init() {
   try {
     const r = await API.call({ action: 'load' });
     if (!r.ok) { if (r.error === 'night_lock') { $('#overlay-login').classList.add('hidden'); return $('#overlay-lock').classList.remove('hidden'); } API.clearSession(); return renderLogin('login', r.message || '다시 로그인해 주세요'); }
-    setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) serverSettings = r.settings; state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
+    setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) { serverSettings = r.settings; applyPricing(r.settings.prices); } state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
     $('#overlay-login').classList.add('hidden'); start();
   } catch (e) { renderLogin('login', '서버에 연결할 수 없어요. 인터넷을 확인한 뒤 다시 들어와 주세요.'); }
 }

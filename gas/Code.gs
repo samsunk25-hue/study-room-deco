@@ -197,11 +197,32 @@ function approve_(acc, body) {
 }
 
 /* ======================= 교사 설정 (심야 잠금 · 수업 시간 꾸미기 잠금 · 이벤트 · 가입 코드) ======================= */
+/* ---- 가격·보상 (교사가 앱에서 설정) ---- */
+const PRICE_KEYS = ['common', 'rare', 'epic', 'recolor', 'restyle', 'wallpaper', 'photoFrame', 'conceptCoin', 'quizCoin', 'passCoin', 'firstTryBonus', 'monsterBonus', 'stickerCoin'];
+function defaultPricing_() {
+  const sp = CONFIG.shopPrice || { common: 80, rare: 160, epic: 320 }, rw = CONFIG.rewards || {};
+  return { common: sp.common, rare: sp.rare, epic: sp.epic, recolor: CONFIG.recolorCost, restyle: CONFIG.restyleCost, wallpaper: CONFIG.wallpaperCost, photoFrame: ITEMS.photo_frame.cost,
+    conceptCoin: rw.conceptCoin, quizCoin: rw.quizCoin, passCoin: rw.passCoin, firstTryBonus: rw.firstTryBonus, monsterBonus: rw.monsterBonus, stickerCoin: (CONFIG.sticker || {}).coin };
+}
+let pricingDefaults_ = null;
+function pricing_() {
+  if (!pricingDefaults_) pricingDefaults_ = defaultPricing_();
+  let saved = {}; try { saved = JSON.parse(props_().getProperty('PRICES') || '{}'); } catch (e) { saved = {}; }
+  const out = {}; PRICE_KEYS.forEach(k => { const v = Number(saved[k]); out[k] = (saved[k] !== undefined && !isNaN(v) && v >= 0) ? v : pricingDefaults_[k]; });
+  return out;
+}
+/** CONFIG/ITEMS 에 반영 (엔진이 CONFIG 를 읽으므로 요청마다 적용) */
+function applyPricing_(p) {
+  CONFIG.shopPrice = { common: p.common, rare: p.rare, epic: p.epic };
+  CONFIG.recolorCost = p.recolor; CONFIG.restyleCost = p.restyle; CONFIG.wallpaperCost = p.wallpaper; ITEMS.photo_frame.cost = p.photoFrame;
+  CONFIG.rewards = Object.assign({}, CONFIG.rewards, { conceptCoin: p.conceptCoin, quizCoin: p.quizCoin, passCoin: p.passCoin, firstTryBonus: p.firstTryBonus, monsterBonus: p.monsterBonus });
+  CONFIG.sticker = Object.assign({}, CONFIG.sticker, { coin: p.stickerCoin });
+}
 /** 학생 앱에도 내려가는 공개 설정 */
 function publicSettings_() {
   const p = props_(); let cl = null;
   try { cl = JSON.parse(p.getProperty('CLASS_LOCK') || 'null'); } catch (e) { cl = null; }
-  return { nightLockOff: p.getProperty('NIGHT_LOCK_OFF') === 'true', classLock: cl || { enabled: !!CONFIG.classLock.enabled, start: CONFIG.classLock.start, end: CONFIG.classLock.end } };
+  return { nightLockOff: p.getProperty('NIGHT_LOCK_OFF') === 'true', classLock: cl || { enabled: !!CONFIG.classLock.enabled, start: CONFIG.classLock.start, end: CONFIG.classLock.end }, prices: pricing_() };
 }
 function getSettings_(acc) {
   if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
@@ -214,6 +235,10 @@ function saveSettings_(acc, body) {
   if ('nightLockOff' in s) p.setProperty('NIGHT_LOCK_OFF', s.nightLockOff ? 'true' : 'false');
   if ('eventForce' in s) p.setProperty('EVENT_FORCE', s.eventForce ? 'true' : 'false');
   if ('joinCode' in s) { const v = String(s.joinCode || '').trim(); if (v) p.setProperty('JOIN_CODE', v); else p.deleteProperty('JOIN_CODE'); }
+  if (s.prices && typeof s.prices === 'object') {
+    const cur = pricing_(); PRICE_KEYS.forEach(k => { const v = Number(s.prices[k]); if (s.prices[k] !== undefined && s.prices[k] !== '' && !isNaN(v) && v >= 0 && v <= 100000) cur[k] = Math.round(v); });
+    p.setProperty('PRICES', JSON.stringify(cur));
+  }
   if (s.classLock && typeof s.classLock === 'object') {
     const cl = { enabled: !!s.classLock.enabled, start: Math.min(23, Math.max(0, Number(s.classLock.start) || 0)), end: Math.min(24, Math.max(0, Number(s.classLock.end) || 0)) };
     p.setProperty('CLASS_LOCK', JSON.stringify(cl));
@@ -691,6 +716,7 @@ function doPost(e) {
   let body;
   try { body = JSON.parse(e.postData.contents); } catch (err) { return json_(fail_('bad_json')); }
   const now = kstNow_(), today = todayKey_(now);
+  applyPricing_(pricing_());                                   // 교사가 정한 가격·보상 반영
   const tokenId = verifyToken_(body.token);
   const isTeacher = !!tokenId && tokenId.startsWith('T:');
   try {
