@@ -711,6 +711,7 @@ let tAdmin = { settings: null, coupons: null, unitId: null, topicId: null, quest
 async function renderTeacherServer(body) {
   body.innerHTML = `
     <div class="card" style="background:#eef6ff"><h3>👩‍🏫 교사로 접속 중</h3><p class="small">심야·수업 시간 잠금이 적용되지 않고 코인은 무제한이에요. 친구 방 탭에서 모든 학생의 방과 학습자료를 볼 수 있어요. 이 계정의 방은 시험용이라 평가기록부에 들어가지 않아요.</p></div>
+    <div class="card" id="t-approvals"><h3>✅ 승인 대기</h3><p class="muted small">불러오는 중...</p></div>
     <div class="card" id="t-settings"><h3>⚙️ 설정</h3><p class="muted small">불러오는 중...</p></div>
     <div class="card" id="t-coupons"><h3>🎟️ 쿠폰 관리</h3><p class="muted small">불러오는 중...</p></div>
     <div class="card" id="t-questions"><h3>📝 형성평가 문항 관리</h3></div>
@@ -726,6 +727,28 @@ async function renderTeacherServer(body) {
   } catch (e) { $('#t-settings').innerHTML = '<h3>⚙️ 설정</h3><p class="muted small">불러오지 못했어요: ' + esc(e.message) + '</p>'; }
   tAdmin.coupons = coupons.map(c => Object.assign({}, c)); renderTCoupons();
   renderTQuestions();
+  loadTApprovals();
+}
+async function loadTApprovals() {
+  const box = $('#t-approvals'); if (!box) return;
+  try { const r = await API.call({ action: 'approvals' }); if (!r.ok) throw new Error(r.message || r.error); tAdmin.approvals = r.list || []; renderTApprovals(); }
+  catch (e) { box.innerHTML = '<h3>✅ 승인 대기</h3><p class="muted small">불러오지 못했어요: ' + esc(e.message) + '</p>'; }
+}
+function renderTApprovals() {
+  const list = tAdmin.approvals || []; const box = $('#t-approvals'); if (!box) return;
+  box.innerHTML = `<h3>✅ 승인 대기 <small class="muted">${list.length}건 — 사진 액자 · 쿠폰</small></h3>` +
+    (list.length ? list.map(a => `<div class="approval">${a.type === 'photo' ? (a.img ? `<img src="${a.img}" style="filter:none;width:96px;height:64px">` : '<span class="muted small">사진 없음</span>') : '<span style="font-size:1.6rem">🎟️</span>'}
+      <div style="flex:1"><b>${emojiFor(a.id)} ${esc(a.name)}</b> <small class="muted">${esc(a.id)} · ${esc(a.time)}</small><br><span class="small">${a.type === 'photo' ? '📷 커스텀 사진 액자' : esc(a.desc)}</span></div>
+      <button class="btn primary tiny ta-ok" data-row="${a.row}">승인</button><button class="btn tiny danger ta-no" data-row="${a.row}">거절</button></div>`).join('') +
+      `<div class="btn-row"><button class="btn accent" id="ta-all">모두 승인 (${list.length})</button><button class="btn ghost" id="ta-refresh">새로 고침</button></div>` : '<p class="muted small">대기 중인 요청이 없어요.</p><div class="btn-row"><button class="btn ghost" id="ta-refresh">새로 고침</button></div>');
+  const act = async (rows, decision) => {
+    const r = await API.call({ action: 'approve', rows, decision }).catch(() => ({ ok: false, message: '연결 실패' }));
+    if (r.ok) { tAdmin.approvals = r.list || []; renderTApprovals(); toast(decision === 'reject' ? '거절했어요' : '승인했어요. 학생 화면에 바로 반영돼요', 'ok'); } else toast(r.message || '실패했어요', 'bad');
+  };
+  $$('.ta-ok').forEach(b => b.onclick = () => act([+b.dataset.row], 'approve'));
+  $$('.ta-no').forEach(b => b.onclick = () => { if (confirm('거절할까요? 사진은 지워지고 쿠폰 코인은 돌려줘요.')) act([+b.dataset.row], 'reject'); });
+  const all = $('#ta-all'); if (all) all.onclick = () => act(list.map(a => a.row), 'approve');
+  $('#ta-refresh').onclick = loadTApprovals;
 }
 function renderTSettings() {
   const s = tAdmin.settings;
@@ -753,8 +776,10 @@ function renderTCoupons() {
   $('#tc-add').onclick = () => { sync(); list.push({ id: 'cp' + Date.now().toString(36), name: '', cost: 100, desc: '' }); renderTCoupons(); };
   $('#tc-save').onclick = async () => {
     sync();
-    const r = await API.call({ action: 'saveCoupons', coupons: list }).catch(() => ({ ok: false, message: '연결 실패' }));
-    if (r.ok) { coupons = r.coupons; tAdmin.coupons = coupons.map(c => Object.assign({}, c)); renderTCoupons(); toast('쿠폰을 저장했어요', 'ok'); } else toast(r.message || '실패했어요', 'bad');
+    if (!list.some(c => c.name.trim())) return toast('쿠폰 이름을 입력해 주세요', 'bad');
+    const r = await API.call({ action: 'saveCoupons', coupons: list }).catch(e => ({ ok: false, message: '연결 실패: ' + e.message }));
+    if (r.ok) { coupons = r.coupons; tAdmin.coupons = coupons.map(c => Object.assign({}, c)); renderTCoupons(); toast(`쿠폰 ${coupons.length}개를 저장했어요. 학생 상점에 바로 반영돼요`, 'ok'); }
+    else toast('저장 실패: ' + (r.message || r.error || '알 수 없는 오류'), 'bad');
   };
 }
 function renderTQuestions() {

@@ -59,6 +59,70 @@ function saveCoupons_(acc, body) {
   return { ok: true, coupons: list };
 }
 
+/* ======================= 교사 승인 (앱 교사 모드) ======================= */
+function approvals_(acc) {
+  if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
+  const sh = sheet_(SHEETS.approvals, APPROVAL_HEADER); const n = sh.getLastRow();
+  const rows = n > 1 ? sh.getRange(2, 1, n - 1, APPROVAL_HEADER.length).getValues() : [];
+  const list = [];
+  rows.forEach((r, i) => {
+    if (r[8] === true) return;                                   // 처리됨
+    const item = { row: i + 2, time: String(r[0]), id: String(r[1]), name: String(r[2]), type: String(r[3]), desc: String(r[4]), approved: r[7] === true };
+    if (item.type === 'photo' && r[6]) {
+      try { const b = DriveApp.getFileById(r[6]).getBlob(); item.img = 'data:' + b.getContentType() + ';base64,' + Utilities.base64Encode(b.getBytes()); } catch (e) { item.img = ''; }
+    }
+    list.push(item);
+  });
+  return { ok: true, list: list.slice(-40) };
+}
+/** body.rows: 처리할 행 번호들, body.action: 'approve' | 'reject' */
+function approve_(acc, body) {
+  if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
+  const rowsWanted = (Array.isArray(body.rows) ? body.rows : []).map(Number).filter(x => x >= 2);
+  const reject = body.decision === 'reject';
+  if (!rowsWanted.length) return fail_('no_rows', '처리할 항목이 없어요');
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return fail_('busy', '지금 접속이 많아요. 잠시 후 다시 시도해 주세요');
+  try {
+    const sh = sheet_(SHEETS.approvals, APPROVAL_HEADER); const n = sh.getLastRow();
+    const byStudent = {};
+    rowsWanted.forEach(row => {
+      if (row > n) return;
+      const r = sh.getRange(row, 1, 1, APPROVAL_HEADER.length).getValues()[0];
+      if (r[8] === true) return;
+      if (reject) {
+        sh.getRange(row, 8, 1, 2).setValues([[false, true]]);
+        (byStudent[String(r[1])] = byStudent[String(r[1])] || []).push({ reject: true, type: String(r[3]), desc: String(r[4]), fileId: String(r[6] || '') });
+      } else {
+        sh.getRange(row, 8).setValue(true);                      // 승인 체크 → applyApprovalsFor_ 가 반영하고 처리됨 표시
+        byStudent[String(r[1])] = byStudent[String(r[1])] || [];
+      }
+    });
+    let done = 0;
+    Object.keys(byStudent).forEach(id => {
+      const sacc = account_(id); if (!sacc) return;
+      const st = loadState_(sacc, false);
+      let changed = applyApprovalsFor_(sacc, st);
+      byStudent[id].forEach(x => {                                 // 거절: 사진 제거(다시 올릴 수 있게) / 쿠폰 환불
+        if (!x.reject) return;
+        if (x.type === 'photo') {
+          const m = /uid (\d+)/.exec(x.desc); const uid = m ? Number(m[1]) : -1;
+          Object.keys(st.rooms).forEach(k => st.rooms[k].inventory.forEach(it => { if (it.uid === uid && it.id === 'photo_frame') { it.img = null; it.approved = false; changed = true; } }));
+          Object.keys(st.photoMonths || {}).forEach(mo => delete st.photoMonths[mo]);
+          if (x.fileId) { try { DriveApp.getFileById(x.fileId).setTrashed(true); } catch (e) { /* ignore */ } }
+        } else if (x.type === 'coupon') {
+          const name = x.desc.replace(/^쿠폰:\s*/, '');
+          const c = st.coupons.find(y => y.name === name && y.status === 'pending');
+          if (c) { c.status = 'rejected'; const cp = loadCoupons_().find(y => y.name === name); if (cp) st.coins += cp.cost; changed = true; }
+        }
+      });
+      if (changed) saveState_(sacc, st);
+      done++;
+    });
+    return Object.assign(approvals_(acc), { done });
+  } finally { lock.releaseLock(); }
+}
+
 /* ======================= 교사 설정 (심야 잠금 · 이벤트 · 가입 코드) ======================= */
 function getSettings_(acc) {
   if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
@@ -550,6 +614,8 @@ function doPost(e) {
       case 'questions': return json_(questionsFor_(acc, body));          // 교사 전용
       case 'saveQuestions': return json_(saveQuestions_(acc, body));     // 교사 전용
       case 'coupons': return json_({ ok: true, coupons: loadCoupons_() });
+      case 'approvals': return json_(approvals_(acc));                   // 교사 전용
+      case 'approve': return json_(approve_(acc, body));                 // 교사 전용
       case 'saveCoupons': return json_(saveCoupons_(acc, body));         // 교사 전용
       case 'getSettings': return json_(getSettings_(acc));               // 교사 전용
       case 'saveSettings': return json_(saveSettings_(acc, body));       // 교사 전용
