@@ -220,7 +220,7 @@ function createRoom(cv, roomGetter, hk) {
 
   /* 벽걸이 아이템 */
   function drawWallItem(it, def, c, a) {
-    const id = it.id;
+    const id = def.shape || it.id;
     const z = 62, h = id === 'concept_frame' ? 72 : 46;
     wallPanel(it.side, it.pos, z, def.w, h, (W, H) => {
       ctx.fillStyle = a; ctx.fillRect(0, 0, W, H);
@@ -434,7 +434,7 @@ function createRoom(cv, roomGetter, hk) {
       bb = { x0: 1e9, y0: 1e9, x1: -1e9, y1: -1e9 };
       ctx.globalAlpha = drag && drag.uid === it.uid ? 0.75 : 1;
       if (def.wall) drawWallItem(it, def, c, a);
-      else { const f = footprint(it); DRAW[it.id](it.x, it.y, f.w, f.d, c, a, it); }
+      else { const f = footprint(it); (DRAW[def.shape || it.id] || DRAW.chair)(it.x, it.y, f.w, f.d, c, a, it); }
       ctx.globalAlpha = 1;
       if (selected === it.uid) {
         ctx.save(); ctx.setLineDash([5, 4]); ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2;

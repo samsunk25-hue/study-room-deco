@@ -197,6 +197,43 @@ function approve_(acc, body) {
 }
 
 /* ======================= 교사 설정 (심야 잠금 · 수업 시간 꾸미기 잠금 · 이벤트 · 가입 코드) ======================= */
+/* ---- 교사 정의 가구 (아이템 시트) ---- */
+const ITEM_HEADER = ['아이템ID', '이름', '이모지', '모양(기존 가구ID)', '희귀도(common/rare/epic)', '가격(비우면 희귀도 기본가)', '상점 판매', '상자 드롭', '사용'];
+SHEETS.items = '아이템';
+function loadItems_() {
+  const c = cache_().get('items'); if (c) return JSON.parse(c);
+  const sh = sheet_(SHEETS.items, ITEM_HEADER); const n = sh.getLastRow();
+  const rows = n > 1 ? sh.getRange(2, 1, n - 1, ITEM_HEADER.length).getValues() : [];
+  const list = rows.filter(r => r[0] && r[1]).map(r => ({ id: cellStr_(r[0]), name: cellStr_(r[1]), emoji: cellStr_(r[2]), shape: cellStr_(r[3]), rarity: cellStr_(r[4]) || 'common',
+    cost: Number(r[5]) || 0, pool: r[7] === true ? 'box' : 'shop', sell: r[6] !== false, enabled: r[8] !== false }));
+  cache_().put('items', JSON.stringify(list), 300);
+  return list;
+}
+function applyItems_() { applyCustomItems(loadItems_().map(x => Object.assign({}, x, { enabled: x.enabled && (x.sell || x.pool === 'box'), pool: x.sell ? x.pool : (x.pool === 'box' ? 'box' : 'none') }))); }
+function saveItems_(acc, body) {
+  if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
+  const list = (Array.isArray(body.items) ? body.items : []).map(x => ({
+    id: String(x.id || '').trim().replace(/[^A-Za-z0-9_]/g, '') || ('ci' + Date.now().toString(36)), name: String(x.name || '').trim().slice(0, 20), emoji: String(x.emoji || '').trim().slice(0, 4),
+    shape: ITEMS[x.shape] && !ITEMS[x.shape].custom ? String(x.shape) : 'chair', rarity: RARITY[x.rarity] ? x.rarity : 'common', cost: Math.max(0, Math.min(100000, Number(x.cost) || 0)),
+    pool: x.pool === 'box' ? 'box' : 'shop', sell: x.sell !== false, enabled: x.enabled !== false,
+  })).filter(x => x.name);
+  if (list.length > 40) return fail_('too_many', '가구는 40개까지예요');
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return fail_('busy', '지금 접속이 많아요. 잠시 후 다시 시도해 주세요');
+  try {
+    const sh = sheet_(SHEETS.items, ITEM_HEADER);
+    if (sh.getLastRow() > 1) sh.deleteRows(2, sh.getLastRow() - 1);
+    if (list.length) {
+      sh.getRange(2, 1, list.length, 5).setNumberFormat('@');
+      sh.getRange(2, 1, list.length, ITEM_HEADER.length).setValues(list.map(x => [x.id, x.name, x.emoji, x.shape, x.rarity, x.cost || '', x.sell, x.pool === 'box', x.enabled]));
+      sh.getRange(2, 7, list.length, 3).insertCheckboxes();
+      list.forEach((x, i) => sh.getRange(i + 2, 7, 1, 3).setValues([[x.sell, x.pool === 'box', x.enabled]]));
+    }
+    cache_().remove('items');
+  } finally { lock.releaseLock(); }
+  return { ok: true, items: loadItems_() };
+}
+
 /* ---- 가격·보상 (교사가 앱에서 설정) ---- */
 const PRICE_KEYS = ['common', 'rare', 'epic', 'recolor', 'restyle', 'wallpaper', 'photoFrame', 'conceptCoin', 'quizCoin', 'passCoin', 'firstTryBonus', 'monsterBonus', 'stickerCoin'];
 function defaultPricing_() {
@@ -335,7 +372,7 @@ function teacherLogin_(body) {
   let info = null; try { info = raw ? JSON.parse(raw) : null; } catch (e) { info = null; }
   if (!info || info.exp < Date.now()) return fail_('bad_code', code.length === 8 ? '교사 접속 코드가 맞지 않거나 만료됐어요. 시트 메뉴 ⑧에서 다시 발급해 보세요' : '교사 접속 코드는 8자리예요 (예: AB12-CD34). 시트 메뉴 ⑧에서 발급하세요');
   const acc = account_('T:' + info.email); if (!acc) return fail_('not_teacher', '승인된 교사가 아니에요. 관리자에게 등록을 요청하세요');
-  return { ok: true, token: makeToken_(acc.id), id: acc.id, name: acc.name, teacher: true, state: loadState_(acc, false), units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), inbox: { knocks: [], stickers: [] } };
+  return { ok: true, token: makeToken_(acc.id), id: acc.id, name: acc.name, teacher: true, state: loadState_(acc, false), units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), items: loadItems_(), inbox: { knocks: [], stickers: [] } };
 }
 
 function register_(body, today) {
@@ -360,7 +397,7 @@ function register_(body, today) {
     sh.getRange(at, 1, 1, ACC_HEADER.length).setValues([[id, name, hash_(salt, pw), salt, file.getId(), today, today, 'knock', false]]);
     sh.getRange(at, 1).setNumberFormat('@');
     uncache_(id);
-    return { ok: true, token: makeToken_(id), name, state, units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), inbox: { knocks: [], stickers: [] } };
+    return { ok: true, token: makeToken_(id), name, state, units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), items: loadItems_(), inbox: { knocks: [], stickers: [] } };
   } finally { lock.releaseLock(); }
 }
 function login_(body, today) {
@@ -377,7 +414,7 @@ function login_(body, today) {
   uncache_(id);
   const acc = account_(id);
   const state = loadState_(acc, true);
-  return { ok: true, token: makeToken_(id), name: acc.name, state, units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), inbox: inbox_(acc), mustChange: a.data[ACC.reset] === true };
+  return { ok: true, token: makeToken_(id), name: acc.name, state, units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), items: loadItems_(), inbox: inbox_(acc), mustChange: a.data[ACC.reset] === true };
 }
 function changePassword_(acc, body) {
   const pw = String(body.password || ''); if (pw.length < 4 || pw.length > 30) return fail_('bad_pw', '비밀번호는 4자 이상이에요');
@@ -717,6 +754,7 @@ function doPost(e) {
   try { body = JSON.parse(e.postData.contents); } catch (err) { return json_(fail_('bad_json')); }
   const now = kstNow_(), today = todayKey_(now);
   applyPricing_(pricing_());                                   // 교사가 정한 가격·보상 반영
+  applyItems_();                                               // 교사 정의 가구 병합
   const tokenId = verifyToken_(body.token);
   const isTeacher = !!tokenId && tokenId.startsWith('T:');
   try {
@@ -733,7 +771,7 @@ function doPost(e) {
       case 'unitStats': return json_(unitStats_(acc));                   // 교사 전용
       case 'seedTest': return json_(seedTest_(acc, body, today));          // 교사 전용 (테스트 자료)
       case 'allSummaries': return json_(allSummaries_(acc));             // 교사 전용
-      case 'load': return json_({ ok: true, state: loadState_(acc, true), units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), inbox: inbox_(acc) });
+      case 'load': return json_({ ok: true, state: loadState_(acc, true), units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), items: loadItems_(), inbox: inbox_(acc) });
       case 'cmd': return json_(command_(acc, body.cmd, today));
       case 'grade': {
         const u = loadUnits_().find(x => x.id === (body.topicId || body.unitId)); if (!u) return json_(fail_('no_unit', '성취기준을 찾을 수 없어요'));
@@ -749,6 +787,8 @@ function doPost(e) {
       case 'questions': return json_(questionsFor_(acc, body));          // 교사 전용
       case 'saveQuestions': return json_(saveQuestions_(acc, body));     // 교사 전용
       case 'coupons': return json_({ ok: true, coupons: loadCoupons_() });
+      case 'items': return json_({ ok: true, items: loadItems_() });
+      case 'saveItems': return json_(saveItems_(acc, body));             // 교사 전용
       case 'approvals': return json_(approvals_(acc));                   // 교사 전용
       case 'events': return json_({ ok: true, events: loadEvents_() });
       case 'saveEvents': return json_(saveEvents_(acc, body));           // 교사 전용
@@ -813,7 +853,7 @@ function setup() {
   requireAdmin_();
   sheet_(SHEETS.accounts, ACC_HEADER); sheet_(SHEETS.teachers, ['이메일', '이름', '승인', '등록일']);
   sheet_(SHEETS.units, UNIT_HEADER); sheet_(SHEETS.records, ['학번', '이름']);
-  sheet_(SHEETS.coupons, COUPON_HEADER); loadCoupons_(); sheet_(SHEETS.events, EVENT_HEADER); loadEvents_();
+  sheet_(SHEETS.coupons, COUPON_HEADER); loadCoupons_(); sheet_(SHEETS.events, EVENT_HEADER); loadEvents_(); sheet_(SHEETS.items, ITEM_HEADER);
   const qs = sheet_(SHEETS.questions, QUESTION_HEADER);
   qs.getRange('B2:B1000').setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(['객관식', '단답형'], true).setAllowInvalid(false).build());
   sheet_(SHEETS.approvals, APPROVAL_HEADER); sheet_(SHEETS.social, SOCIAL_HEADER);
@@ -853,7 +893,7 @@ function fillSampleUnits() {
   }
   sh.setColumnWidths(4, 5, 320); sh.getRange(2, 1, Math.max(1, sh.getLastRow() - 1), UNIT_HEADER.length).setWrap(true).setVerticalAlignment('top');
   // 문항 시트: 아직 행이 없는 성취기준만 채움 (교사가 고친 문항은 보존)
-  sheet_(SHEETS.coupons, COUPON_HEADER); loadCoupons_(); sheet_(SHEETS.events, EVENT_HEADER); loadEvents_();
+  sheet_(SHEETS.coupons, COUPON_HEADER); loadCoupons_(); sheet_(SHEETS.events, EVENT_HEADER); loadEvents_(); sheet_(SHEETS.items, ITEM_HEADER);
   const qs = sheet_(SHEETS.questions, QUESTION_HEADER);
   qs.getRange('B2:B1000').setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(['객관식', '단답형'], true).setAllowInvalid(false).build());
   const have = questionMap_(); const qrows = [];

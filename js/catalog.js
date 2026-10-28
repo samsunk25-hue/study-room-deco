@@ -124,3 +124,12 @@ const SAMPLE_SUMMARIES = [
   '이항은 등식의 성질 때문에 가능하며, 항을 옮기면 부호가 반대로 바뀐다.',
   '기체는 입자 사이 거리가 멀어서 압축이 쉽고, 액체는 입자가 가까워서 압축이 잘 안 된다.',
 ];
+
+/* 교사 정의 가구를 카탈로그에 병합 (브라우저·서버 공용). shape = 그림을 빌려올 기존 가구 ID */
+function applyCustomItems(list) {
+  (list || []).forEach(x => {
+    const base = ITEMS[x.shape] || ITEMS.chair; if (!x.id || !base) return;
+    ITEMS[x.id] = Object.assign({}, base, { name: x.name || base.name, emoji: x.emoji || base.emoji, rarity: RARITY[x.rarity] ? x.rarity : base.rarity,
+      pool: x.enabled === false ? 'none' : (x.pool || 'shop'), cost: x.cost > 0 ? Number(x.cost) : undefined, shape: base.shape || x.shape, custom: true });
+  });
+}

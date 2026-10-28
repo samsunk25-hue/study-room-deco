@@ -13,6 +13,8 @@ const pad = n => String(n).padStart(2, '0');
 let state = null, topics = [], units = [], currentRoomId = null, serverOffset = 0;
 let coupons = CONFIG.coupons.slice();   // 서버 모드에서는 쿠폰 시트 내용으로 교체됨
 let events = Engine.defaultEvents();    // 서버 모드에서는 이벤트 시트 내용으로 교체됨
+let customItems = [];                     // 교사 정의 가구 (서버 아이템 시트)
+function applyItems(list) { if (!list) return; customItems = list; applyCustomItems(list.map(x => Object.assign({}, x, { pool: x.sell ? x.pool : (x.pool === 'box' ? 'box' : 'none'), enabled: x.enabled && (x.sell || x.pool === 'box') }))); }
 let serverSettings = { nightLockOff: false, classLock: Object.assign({}, CONFIG.classLock) };   // 교사가 앱에서 바꾸는 공개 설정
 function applyPricing(p) {   // 서버에서 받은 가격·보상을 CONFIG 에 반영 (표시와 즉시 적용 계산이 서버와 같아지도록)
   if (!p) return;
@@ -100,7 +102,7 @@ async function dispatch(cmd, interactive = false) {
 async function reloadFromServer() {
   try {
     const r = await API.call({ action: 'load' });
-    if (r.ok) { if (r.units) setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) { serverSettings = r.settings; applyPricing(r.settings.prices); } state = Engine.migrate(r.state, units); inbox = r.inbox || inbox; updateHeader(); checkLocks(); refreshCurrent(); }
+    if (r.ok) { if (r.units) setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) { serverSettings = r.settings; applyPricing(r.settings.prices); } if (r.items) applyItems(r.items); state = Engine.migrate(r.state, units); inbox = r.inbox || inbox; updateHeader(); checkLocks(); refreshCurrent(); }
     else handleServerError(r);
   } catch (e) { /* 다음 기회에 */ }
 }
@@ -212,7 +214,7 @@ async function auth(action, payload) {
       return renderLogin(mode, msg);
     }
     API.setSession({ token: r.token, id: r.id || payload.id, name: r.name, teacher: !!r.teacher });
-    setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) { serverSettings = r.settings; applyPricing(r.settings.prices); } state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
+    setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) { serverSettings = r.settings; applyPricing(r.settings.prices); } if (r.items) applyItems(r.items); state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
     $('#overlay-login').classList.add('hidden');
     if (r.mustChange) changePasswordModal(true);
     start();
@@ -689,16 +691,16 @@ function renderShop() {
   const room = currentRoom(); const hasFrame = room.inventory.some(i => i.id === 'photo_frame');
   $('#shop-body').innerHTML = `
     <div class="card"><h2>🛒 상점</h2><p class="muted small">코인은 요약을 통과하면 받아요. 색상·스타일 리폼은 내 방에서 가구를 선택해 할 수 있어요. 구매한 액자는 <b>${esc(unitTitle(currentRoomId))}</b> 방에 들어가요.</p></div>
-    ${isTeacher() ? '<div class="card" id="t-photo-approvals" style="background:#eef6ff"><h3>✅ 사진 액자 승인 대기</h3><p class="muted small">불러오는 중...</p></div><div class="card" id="t-coupon-approvals" style="background:#eef6ff"><h3>✅ 쿠폰 승인 대기</h3><p class="muted small">불러오는 중...</p></div><div class="card" id="t-coupons" style="background:#eef6ff"></div>' : ''}
+    ${isTeacher() ? '<div class="card" id="t-photo-approvals" style="background:#eef6ff"><h3>✅ 사진 액자 승인 대기</h3><p class="muted small">불러오는 중...</p></div><div class="card" id="t-coupon-approvals" style="background:#eef6ff"><h3>✅ 쿠폰 승인 대기</h3><p class="muted small">불러오는 중...</p></div><div class="card" id="t-coupons" style="background:#eef6ff"></div><div class="card" id="t-items" style="background:#eef6ff"></div>' : ''}
     <h3>🖼️ 특별 아이템</h3>
     <div class="shop-grid"><div class="card shop-item"><div class="emoji">📷</div><b>커스텀 사진 액자</b><p class="small muted">빈 액자를 사서 사진을 올려요. 개인정보·초상권·저작권 확인 후 올릴 수 있고, 선생님이 승인하면 컬러로 전시돼요. (월 1회)</p>
       <div class="price">🪙 ${ITEMS.photo_frame.cost}</div><button class="btn primary" id="buy-frame" ${hasFrame ? 'disabled' : ''}>${hasFrame ? '이 방에 보유 중' : '구매'}</button></div></div>
     <h3 style="margin-top:14px">🪑 가구 상점 <small class="muted">— 산 가구는 <b>${esc(unitTitle(currentRoomId))}</b> 방 보관함에 들어가요</small></h3>
-    <div class="shop-grid">${Object.keys(ITEMS).filter(k => ITEMS[k].pool === 'box').map(k => { const d = ITEMS[k], r = RARITY[d.rarity], p = (CONFIG.shopPrice || {})[d.rarity] || 100; return `<div class="card shop-item"><div class="emoji">${d.emoji}</div><b>${esc(d.name)}</b> <span class="rar small" style="color:${r.color}">${r.name}</span><div class="price">🪙 ${p}</div><button class="btn primary buy-item" data-id="${k}">구매</button></div>`; }).join('')}</div>
+    <div class="shop-grid">${Object.keys(ITEMS).filter(k => (ITEMS[k].pool === 'box' || ITEMS[k].pool === 'shop') && k !== 'photo_frame').map(k => { const d = ITEMS[k], r = RARITY[d.rarity], p = d.cost > 0 ? d.cost : ((CONFIG.shopPrice || {})[d.rarity] || 100); return `<div class="card shop-item"><div class="emoji">${d.emoji}</div><b>${esc(d.name)}</b> <span class="rar small" style="color:${r.color}">${r.name}</span><div class="price">🪙 ${p}</div><button class="btn primary buy-item" data-id="${k}">구매</button></div>`; }).join('')}</div>
     <h3 style="margin-top:14px">🎟️ O2O 비밀 상점 <small class="muted">— 현실 교실 쿠폰 (선생님 승인 후 사용)</small></h3>
     <div class="shop-grid">${coupons.map(cp => `<div class="card shop-item"><div class="emoji">🎟️</div><b>${esc(cp.name)}</b><p class="small muted">${esc(cp.desc)}</p><div class="price">🪙 ${cp.cost}</div><button class="btn primary buy-coupon" data-id="${cp.id}">구매</button></div>`).join('')}</div>
     ${isTeacher() ? '' : `<div class="card" style="margin-top:14px"><h3>내 쿠폰</h3>${state.coupons.length ? state.coupons.map(c => `<div class="rec"><b>${esc(c.name)}</b> <span class="muted small">${shortDate(c.date)}</span> <span class="tag ${c.status === 'approved' ? 'pass' : (c.status === 'used' || c.status === 'rejected') ? 'fail' : 'best'}">${{ pending: '승인 대기', approved: '사용 가능', used: '사용 완료', rejected: '거절됨 (코인 환불)' }[c.status] || c.status}</span></div>`).join('') : '<p class="muted small">아직 쿠폰이 없어요.</p>'}</div>`}`;
-  if (isTeacher()) { tAdmin.coupons = coupons.map(c => Object.assign({}, c)); renderTCoupons(); loadTApprovals(); }
+  if (isTeacher()) { tAdmin.coupons = coupons.map(c => Object.assign({}, c)); renderTCoupons(); tAdmin.items = customItems.map(x => Object.assign({}, x)); renderTItems(); loadTApprovals(); }
   const bf = $('#buy-frame'); if (bf) bf.onclick = async () => { const r = await dispatch({ type: 'buyFrame', unitId: currentRoomId }, true); if (r.ok) { renderShop(); toast('빈 액자를 샀어요! 내 방 보관함에서 벽에 걸고 사진을 올려 보세요.', 'ok'); } };
   $('.buy-item').forEach(b => b.onclick = async () => { const r = await dispatch({ type: 'buyItem', unitId: currentRoomId, itemId: b.dataset.id }, true); if (r.ok) { toast(`${ITEMS[b.dataset.id].name}을(를) 샀어요! ${unitTitle(currentRoomId)} 방 보관함에서 놓을 수 있어요.`, 'ok'); renderShop(); } });
   $('.buy-coupon').forEach(b => b.onclick = async () => { const r = await dispatch({ type: 'buyCoupon', id: b.dataset.id }, true); if (r.ok) { renderShop(); toast('쿠폰을 신청했어요. 선생님 승인을 기다려요!', 'ok'); } });
@@ -974,6 +976,36 @@ async function renderTeacherLibrary() {
   $('#tl-refresh').onclick = () => { tLib.rows = null; renderTeacherLibrary(); };
 }
 
+/* ---------------- 교사: 가구 추가 (상점) ---------------- */
+function renderTItems() {
+  const box = $('#t-items'); if (!box) return;
+  const list = tAdmin.items || [];
+  const shapes = Object.keys(ITEMS).filter(k => !ITEMS[k].custom && k !== 'photo_frame' && k !== 'concept_frame');
+  box.innerHTML = `<h3>🪑 가구 추가 <small class="muted">— 교사에게만 보여요 · 기존 가구 모양을 빌려 새 가구를 만들어요</small></h3>
+    <p class="muted small">이름·이모지·희귀도·가격을 정하고 모양을 고르세요. "상점 판매"를 끄면 상점에서 사라지고, "상자 드롭"을 켜면 요약 통과 가구 상자에서도 나와요. 삭제해도 이미 가진 학생의 방에서는 없어지지 않아요.</p>
+    ${list.map((x, i) => `<div class="summary-card"><div class="meta"><span><b>${esc(x.emoji || '')} ${esc(x.name || '(이름 없음)')}</b> <small class="muted">${esc(x.id)}</small></span><button class="btn tiny danger ti-del" data-i="${i}">삭제</button></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <label style="flex:2;margin:0">이름 <input type="text" data-i="${i}" data-k="name" value="${esc(x.name)}" maxlength="20"></label>
+        <label style="width:80px;margin:0">이모지 <input type="text" data-i="${i}" data-k="emoji" value="${esc(x.emoji)}" maxlength="4"></label>
+        <label style="flex:2;margin:0">모양 <select data-i="${i}" data-k="shape">${shapes.map(k => `<option value="${k}" ${x.shape === k ? 'selected' : ''}>${ITEMS[k].emoji} ${esc(ITEMS[k].name)}${ITEMS[k].wall ? ' (벽)' : ''}</option>`).join('')}</select></label>
+        <label style="width:110px;margin:0">희귀도 <select data-i="${i}" data-k="rarity">${Object.keys(RARITY).map(k => `<option value="${k}" ${x.rarity === k ? 'selected' : ''}>${RARITY[k].name}</option>`).join('')}</select></label>
+        <label style="width:110px;margin:0">가격 <input type="number" min="0" data-i="${i}" data-k="cost" value="${x.cost || ''}" placeholder="기본가"></label>
+        <label class="toggle" style="margin:0"><input type="checkbox" data-i="${i}" data-k="sell" ${x.sell !== false ? 'checked' : ''}> 상점 판매</label>
+        <label class="toggle" style="margin:0"><input type="checkbox" data-i="${i}" data-k="box" ${x.pool === 'box' ? 'checked' : ''}> 상자 드롭</label>
+      </div></div>`).join('')}
+    ${list.length ? '' : '<p class="muted small">아직 추가한 가구가 없어요.</p>'}
+    <div class="btn-row"><button class="btn" id="ti-add">+ 가구 추가</button><button class="btn primary" id="ti-save">가구 저장</button></div>`;
+  const sync = () => $$('#t-items [data-k]').forEach(el => { const x = list[+el.dataset.i]; if (!x) return; const k = el.dataset.k;
+    if (k === 'sell') x.sell = el.checked; else if (k === 'box') x.pool = el.checked ? 'box' : 'shop'; else if (k === 'cost') x.cost = Number(el.value) || 0; else x[k] = el.value; });
+  $$('.ti-del').forEach(b => b.onclick = () => { sync(); list.splice(+b.dataset.i, 1); renderTItems(); });
+  $('#ti-add').onclick = () => { sync(); list.push({ id: 'ci' + Date.now().toString(36), name: '', emoji: '🎁', shape: 'plant', rarity: 'common', cost: 0, pool: 'shop', sell: true, enabled: true }); renderTItems(); };
+  $('#ti-save').onclick = async () => {
+    sync();
+    const r = await API.call({ action: 'saveItems', items: list }).catch(e => ({ ok: false, message: '연결 실패: ' + e.message }));
+    if (r.ok) { applyItems(r.items); tAdmin.items = customItems.map(x => Object.assign({}, x)); toast(`가구 ${customItems.length}개를 저장했어요. 상점에 바로 반영돼요`, 'ok'); renderShop(); }
+    else toast('저장 실패: ' + (r.message || r.error || '알 수 없는 오류'), 'bad');
+  };
+}
 /* ---------------- 벽 보기 (내 방) ---------------- */
 function renderRoomHint() {
   const el = $('#room-hint'); if (!el) return;
@@ -1033,7 +1065,7 @@ async function init() {
   try {
     const r = await API.call({ action: 'load' });
     if (!r.ok) { if (r.error === 'night_lock') { $('#overlay-login').classList.add('hidden'); return $('#overlay-lock').classList.remove('hidden'); } API.clearSession(); return renderLogin('login', r.message || '다시 로그인해 주세요'); }
-    setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) { serverSettings = r.settings; applyPricing(r.settings.prices); } state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
+    setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) { serverSettings = r.settings; applyPricing(r.settings.prices); } if (r.items) applyItems(r.items); state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
     $('#overlay-login').classList.add('hidden'); start();
   } catch (e) { renderLogin('login', '서버에 연결할 수 없어요. 인터넷을 확인한 뒤 다시 들어와 주세요.'); }
 }
