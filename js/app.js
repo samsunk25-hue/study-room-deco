@@ -11,6 +11,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const pad = n => String(n).padStart(2, '0');
 
 let state = null, topics = [], units = [], currentRoomId = null, serverOffset = 0;
+let coupons = CONFIG.coupons.slice();   // 서버 모드에서는 쿠폰 시트 내용으로 교체됨
 let myRoom = null, visitRoom = null;
 let study = { step: 'units' };
 let teacherOpen = false;
@@ -22,7 +23,7 @@ let pollTimer = null;
 function todayKey(d = new Date(Date.now() + serverOffset)) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
 function monthKey() { return todayKey().slice(0, 7); }
 function shortDate(key) { return key.slice(5).replace('-', '/'); }
-function ctx() { return { topics, units, today: todayKey(), rng: Math.random }; }
+function ctx() { return { topics, units, coupons, today: todayKey(), rng: Math.random }; }
 function unitOf(id) { return units.find(u => u.id === id); }
 function topicOf(id) { return topics.find(t => t.id === id); }
 function topicCode(id) { const t = topicOf(id); return t && t.code ? t.code : ''; }
@@ -37,7 +38,7 @@ function modal(html) { $('#modal-body').innerHTML = html; $('#overlay-modal').cl
 function closeModal() { $('#overlay-modal').classList.add('hidden'); }
 function updateHeader() {
   if (!state) return;
-  $('#coin-display').textContent = `🪙 ${state.coins}`;
+  $('#coin-display').textContent = isTeacher() ? '🪙 ∞' : `🪙 ${state.coins}`;
   $('#user-display').textContent = isTeacher() ? `👩‍🏫 ${state.student.name} · 시간 제한 없음` : (state.student ? `${state.student.name} (${state.student.id})` : '');
   const ev = Engine.eventActive(state, todayKey());
   $('#event-badge').classList.toggle('hidden', !ev);
@@ -84,7 +85,7 @@ async function dispatch(cmd, interactive = false) {
 async function reloadFromServer() {
   try {
     const r = await API.call({ action: 'load' });
-    if (r.ok) { if (r.units) setTopics(r.units); state = Engine.migrate(r.state, units); inbox = r.inbox || inbox; updateHeader(); refreshCurrent(); }
+    if (r.ok) { if (r.units) setTopics(r.units); if (r.coupons) coupons = r.coupons; state = Engine.migrate(r.state, units); inbox = r.inbox || inbox; updateHeader(); refreshCurrent(); }
     else handleServerError(r);
   } catch (e) { /* 다음 기회에 */ }
 }
@@ -196,7 +197,7 @@ async function auth(action, payload) {
       return renderLogin(mode, msg);
     }
     API.setSession({ token: r.token, id: r.id || payload.id, name: r.name, teacher: !!r.teacher });
-    setTopics(r.units); state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
+    setTopics(r.units); if (r.coupons) coupons = r.coupons; state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
     $('#overlay-login').classList.add('hidden');
     if (r.mustChange) changePasswordModal(true);
     start();
@@ -313,6 +314,7 @@ function renderRoomPanel() {
   }));
   $('#privacy-select').value = state.settings.privacy;
   renderInbox();
+  renderOnlineCard();
 }
 function photoConsentModal(frame) {
   modal(`<h2>📷 사진 올리기 전에 확인해요</h2>
@@ -366,6 +368,7 @@ async function answerKnock(visitorId, allow) {
 }
 async function pollInbox() {
   if (MODE !== 'server' || !state) return;
+  if (isTeacher()) return pollOnline();
   try { const r = await API.call({ action: 'inbox' }); if (r.ok) { inbox = r.inbox; if ($('#screen-room').classList.contains('active')) renderInbox(); } } catch (e) { /* ignore */ }
 }
 
@@ -537,6 +540,7 @@ function openBox(o) {
 
 /* ---------------- 서재 ---------------- */
 function renderLibrary() {
+  if (isTeacher()) return renderTeacherLibrary();
   const recs = state.records.slice().sort((a, b) => b.date.localeCompare(a.date) || b.score - a.score);
   const mk = monthKey(); const st = Engine.monthStats(state, mk);
   const can = st.days >= CONFIG.conceptMapThreshold && !state.conceptMaps[mk];
@@ -621,7 +625,7 @@ function renderVisit() {
     ${ids.length ? '<canvas id="visit-canvas" width="820" height="450"></canvas>' : '<p class="muted">아직 꾸민 방이 없어요.</p>'}</div>
     <div class="card"><h3>📚 ${esc(v.name)}의 학습자료 <small class="muted">통과한 요약만 보여요</small></h3>
     ${v.summaries.length ? v.summaries.slice().reverse().map(s => `<div class="summary-card"><div class="meta"><span>${shortDate(s.date)} · ${esc(unitTitle(s.unitId))}${topicCode(s.topicId) ? ' · ' + esc(topicCode(s.topicId)) : ''}</span>
-      ${friends.myStickers.includes(s.key) ? '<span class="tag best">✨ 스티커 남김</span>' : `<button class="btn tiny accent sticker" data-key="${esc(s.key)}">✨ 영감 스티커</button>`}</div><div>${esc(s.text)}</div></div>`).join('') : '<p class="muted">아직 학습자료가 없어요.</p>'}</div>`;
+      ${friends.myStickers.includes(s.key) ? '<span class="tag best">✨ 스티커 남김</span>' : `<button class="btn tiny accent sticker" data-key="${esc(s.key)}">✨ 영감 스티커</button>`}</div><div>${esc(s.text)}</div></div>`).join('') : '<p class="muted">아직 학습자료가 없어요.</p>'}</div>${isTeacher() ? teacherVisitCard(v) : ''}`;
   $('#visit-back').onclick = () => { friends.mode = 'list'; friends.view = null; visitRoom = null; renderFriends(); };
   $$('#friends-body .room-tab').forEach(b => b.onclick = () => { friends.roomId = b.dataset.id; renderVisit(); });
   const cv = $('#visit-canvas');
@@ -642,7 +646,7 @@ function renderShop() {
     <div class="shop-grid"><div class="card shop-item"><div class="emoji">📷</div><b>커스텀 사진 액자</b><p class="small muted">빈 액자를 사서 사진을 올려요. 개인정보·초상권·저작권 확인 후 올릴 수 있고, 선생님이 승인하면 컬러로 전시돼요. (월 1회)</p>
       <div class="price">🪙 ${ITEMS.photo_frame.cost}</div><button class="btn primary" id="buy-frame" ${hasFrame ? 'disabled' : ''}>${hasFrame ? '이 방에 보유 중' : '구매'}</button></div></div>
     <h3 style="margin-top:14px">🎟️ O2O 비밀 상점 <small class="muted">— 현실 교실 쿠폰 (선생님 승인 후 사용)</small></h3>
-    <div class="shop-grid">${CONFIG.coupons.map(cp => `<div class="card shop-item"><div class="emoji">🎟️</div><b>${esc(cp.name)}</b><p class="small muted">${esc(cp.desc)}</p><div class="price">🪙 ${cp.cost}</div><button class="btn primary buy-coupon" data-id="${cp.id}">구매</button></div>`).join('')}</div>
+    <div class="shop-grid">${coupons.map(cp => `<div class="card shop-item"><div class="emoji">🎟️</div><b>${esc(cp.name)}</b><p class="small muted">${esc(cp.desc)}</p><div class="price">🪙 ${cp.cost}</div><button class="btn primary buy-coupon" data-id="${cp.id}">구매</button></div>`).join('')}</div>
     <div class="card" style="margin-top:14px"><h3>내 쿠폰</h3>${state.coupons.length ? state.coupons.map(c => `<div class="rec"><b>${esc(c.name)}</b> <span class="muted small">${shortDate(c.date)}</span> <span class="tag ${c.status === 'approved' ? 'pass' : c.status === 'used' ? 'fail' : 'best'}">${{ pending: '승인 대기', approved: '사용 가능', used: '사용 완료' }[c.status]}</span></div>`).join('') : '<p class="muted small">아직 쿠폰이 없어요.</p>'}</div>`;
   const bf = $('#buy-frame'); if (bf) bf.onclick = async () => { const r = await dispatch({ type: 'buyFrame', unitId: currentRoomId }, true); if (r.ok) { renderShop(); toast('빈 액자를 샀어요! 내 방 보관함에서 벽에 걸고 사진을 올려 보세요.', 'ok'); } };
   $$('.buy-coupon').forEach(b => b.onclick = async () => { const r = await dispatch({ type: 'buyCoupon', id: b.dataset.id }, true); if (r.ok) { renderShop(); toast('쿠폰을 신청했어요. 선생님 승인을 기다려요!', 'ok'); } });
@@ -652,27 +656,10 @@ function renderShop() {
 function renderTeacher() {
   const body = $('#teacher-body');
   if (MODE === 'server') {
-    body.innerHTML = `${isTeacher() ? `<div class="card" style="background:#eef6ff"><h3>👩‍🏫 교사로 접속 중</h3><p class="small">심야·수업 시간 잠금이 적용되지 않고, 친구 방 탭에서 모든 학생의 방과 학습자료를 볼 수 있어요. 이 계정의 방·코인은 시험용이며 평가기록부에 들어가지 않아요. 접속 코드는 30일마다 시트 메뉴 ⑧에서 다시 발급해요.</p></div>` : ''}
-    <div class="card"><h2>🍎 교사 안내</h2>
-      <p>교사 기능은 <b>구글 계정으로 로그인한 교사 전용 스프레드시트(스터디룸 DB)</b>의 메뉴 <b>🏠 스터디룸</b>에서 사용해요. 관리자(시트 소유자)가 승인한 교사만 폴더와 시트를 열 수 있어요.</p>
-      <p class="muted small">학생의 개인정보와 학습 내용은 교사가 지정한 폴더에만 저장되고 외부(AI 서비스 포함)로 전송되지 않아요. 단원·핵심 개념·정답은 <b>단원</b> 시트에만 있고 학생 기기로 가지 않아요.</p></div>
-    <div class="card"><h3>📌 운영 중 할 일</h3>
-      <div class="notice"><b>다른 교사 추가</b> — 관리자가 메뉴 <b>⑥ 교사 등록 승인</b>에 이메일을 입력해요. 폴더 공유와 교사 시트 등록이 함께 돼요. 등록된 교사는 자기 구글 계정으로 시트를 열어 메뉴를 쓸 수 있어요.</div>
-      <div class="notice"><b>사진·쿠폰 승인</b> — <b>승인요청</b> 시트에서 <b>승인</b> 체크박스를 켜면 학생이 다음 접속 때 반영돼요. 바로 반영하려면 <b>④ 승인 처리 적용</b>을 눌러요. 사진은 "사진 링크"로 확인하고, 승인되면 교사 확인용 사본은 자동 삭제돼요.</div>
-      <div class="notice"><b>비밀번호 초기화</b> — <b>⑤ 학생 비밀번호 초기화</b>에 학번을 입력하면 임시 비밀번호가 <b>0000</b>이 되고, 학생이 다음 로그인 때 새 비밀번호를 정해요.</div>
-      <div class="notice"><b>평가기록부</b> — 행은 학번, 열은 날짜예요. 10분마다 자동 갱신되고 <b>③ 평가기록부 지금 갱신</b>으로 즉시 다시 만들 수 있어요. 세특 입력 시 참고하세요.</div>
-      <div class="notice"><b>단원 수정</b> — <b>단원</b> 시트를 고치면 5분 안에 학생 화면에 반영돼요. 한 줄에 개념 하나, 구분자는 <b>|</b> 예요. <b>사용</b> 체크를 끄면 학생에게 보이지 않아요.</div>
-      <div class="notice" style="background:#fee2e2;border-color:#fca5a5"><b>코드를 고친 뒤에는 꼭 새 버전 배포</b> — Apps Script에서 <b>배포 → 배포 관리 → ✏️ → 버전: 새 버전 → 배포</b>를 해야 해요. 저장만 하면 학생 앱은 이전 코드를 계속 써요. "새 배포"를 다시 만들면 URL이 바뀌니 기존 배포를 수정하세요.</div>
-      <div class="notice"><b>백업</b> — 드라이브에서 폴더 전체를 가끔 사본으로 복사해 두세요. <b>학생데이터</b> 폴더의 학번별 파일이 원본이고 평가기록부는 거기서 다시 만들어져요.</div>
-      <div class="notice"><b>심야 잠금 테스트</b> — 밤 10시~아침 7시에는 서버가 접속을 막아요. 그 시간에 테스트하려면 <b>⑦ 심야 잠금 켜기/끄기</b>로 잠시 끄고, 끝나면 다시 켜 주세요.</div></div>
-    <div class="card"><h3>🛠️ 자주 걸리는 문제</h3>
-      <ul class="small">
-        <li><b>메뉴 🏠 스터디룸이 안 보여요</b> → 시트를 새로고침하세요. 그래도 없으면 Apps Script에서 저장됐는지 확인해요.</li>
-        <li><b>학생 화면에 "서버에 연결할 수 없어요"</b> → 배포의 액세스 권한이 "모든 사용자"인지, URL이 /exec 로 끝나는지 확인해요.</li>
-        <li><b>"다시 로그인해 주세요"가 반복돼요</b> → 새 배포를 다시 만들어 URL이 바뀐 경우예요. 배포 관리에서 기존 배포를 수정하거나 catalog.js 의 gasUrl 을 새 URL로 바꿔요.</li>
-        <li><b>"승인된 교사만 사용할 수 있어요"</b> → 관리자가 ⑥ 메뉴로 그 이메일을 승인해야 해요.</li>
-        <li><b>"지금 접속이 많아요"</b> → 동시 제출이 몰릴 때 잠깐 나요. 학생 앱이 자동으로 재시도하고, 상단 "저장 대기" 표시가 사라지면 저장된 거예요.</li>
-      </ul></div>`;
+    if (isTeacher()) { renderTeacherServer(body); return; }
+    body.innerHTML = `<div class="card"><h2>🍎 교사 안내</h2>
+      <p>교사 기능은 로그인 화면의 <b>교사로 접속</b>(스터디룸 DB 시트 메뉴 ⑧에서 받은 8자리 코드)으로 들어오면 이 탭에 나타나요. 형성평가 문항 관리, 쿠폰 관리, 심야 잠금·이벤트·가입 코드 설정을 할 수 있어요.</p>
+      <p class="muted small">사진·쿠폰 승인과 평가기록부는 스터디룸 DB 시트에서 봐요. 학생의 개인정보와 학습 내용은 교사가 지정한 폴더에만 저장되고 외부로 전송되지 않아요.</p></div>`;
     return;
   }
   if (!teacherOpen) {
@@ -712,6 +699,154 @@ function renderTeacher() {
   $('#t-coins').onclick = () => { state.coins += 200; saveLocal(); toast('+200 코인', 'ok'); };
   $('#t-close').onclick = () => { teacherOpen = false; showScreen('room'); };
   $('#t-reset').onclick = () => { if (confirm('이 기기의 모든 기록·가구·코인을 삭제할까요?')) { localStorage.removeItem(STORAGE_KEY); location.reload(); } };
+}
+
+/* ---------------- 교사 모드 (서버) : 설정 · 쿠폰 · 문항 관리 ---------------- */
+let tAdmin = { settings: null, coupons: null, unitId: null, topicId: null, questions: null, source: '' };
+async function renderTeacherServer(body) {
+  body.innerHTML = `
+    <div class="card" style="background:#eef6ff"><h3>👩‍🏫 교사로 접속 중</h3><p class="small">심야·수업 시간 잠금이 적용되지 않고 코인은 무제한이에요. 친구 방 탭에서 모든 학생의 방과 학습자료를 볼 수 있어요. 이 계정의 방은 시험용이라 평가기록부에 들어가지 않아요.</p></div>
+    <div class="card" id="t-settings"><h3>⚙️ 설정</h3><p class="muted small">불러오는 중...</p></div>
+    <div class="card" id="t-coupons"><h3>🎟️ 쿠폰 관리</h3><p class="muted small">불러오는 중...</p></div>
+    <div class="card" id="t-questions"><h3>📝 형성평가 문항 관리</h3></div>
+    <div class="card"><h3>📌 시트에서 하는 일</h3><ul class="small">
+      <li><b>사진·쿠폰 승인</b>: 승인요청 시트의 승인 체크박스를 켜면 학생이 다음 접속 때 반영돼요. (즉시 반영은 메뉴 ④)</li>
+      <li><b>평가기록부</b>: 행=학번, 열=날짜. 10분마다 자동 갱신돼요. (즉시 갱신은 메뉴 ③)</li>
+      <li><b>단원·핵심 개념·오개념</b>: 단원 시트. 문항은 문항 시트 또는 아래 문항 관리에서 고쳐요.</li>
+      <li><b>교사 추가</b>: 관리자가 메뉴 ⑥ / <b>학생 비밀번호 초기화</b>: 메뉴 ⑤ / <b>백업</b>: 드라이브 폴더 사본</li>
+      <li><b>코드 수정</b>: 앱은 git push, 서버는 <code>npm run server</code> 한 줄로 자동 배포돼요. Apps Script 편집기는 열지 않아도 돼요.</li></ul></div>`;
+  try {
+    const r = await API.call({ action: 'getSettings' }); if (!r.ok) throw new Error(r.message || r.error);
+    tAdmin.settings = r.settings; renderTSettings();
+  } catch (e) { $('#t-settings').innerHTML = '<h3>⚙️ 설정</h3><p class="muted small">불러오지 못했어요: ' + esc(e.message) + '</p>'; }
+  tAdmin.coupons = coupons.map(c => Object.assign({}, c)); renderTCoupons();
+  renderTQuestions();
+}
+function renderTSettings() {
+  const s = tAdmin.settings;
+  $('#t-settings').innerHTML = `<h3>⚙️ 설정 <small class="muted">(모든 학생에게 적용)</small></h3>
+    <label class="toggle"><input type="checkbox" id="ts-night" ${s.nightLockOff ? 'checked' : ''}> 심야 잠금 해제 (밤 10시~아침 7시에도 학생 접속 허용)</label>
+    <label class="toggle"><input type="checkbox" id="ts-event" ${s.eventForce ? 'checked' : ''}> 이벤트 강제 활성화 (${esc(CONFIG.event.name)} 한정 가구 드롭)</label>
+    <label>가입 코드 <input type="text" id="ts-join" value="${esc(s.joinCode)}" placeholder="비우면 누구나 가입할 수 있어요" maxlength="40"></label>
+    <div class="btn-row"><button class="btn primary" id="ts-save">설정 저장</button></div>`;
+  $('#ts-save').onclick = async () => {
+    const settings = { nightLockOff: $('#ts-night').checked, eventForce: $('#ts-event').checked, joinCode: $('#ts-join').value.trim() };
+    const r = await API.call({ action: 'saveSettings', settings }).catch(() => ({ ok: false, message: '연결 실패' }));
+    if (r.ok) { tAdmin.settings = r.settings; toast('설정을 저장했어요', 'ok'); } else toast(r.message || '실패했어요', 'bad');
+  };
+}
+function renderTCoupons() {
+  const list = tAdmin.coupons;
+  $('#t-coupons').innerHTML = `<h3>🎟️ 쿠폰 관리 <small class="muted">— 학생 상점에 보이는 현실 교실 쿠폰</small></h3>
+    <div class="sheet-wrap"><table class="sheet"><thead><tr><th>이름</th><th>코인</th><th>설명</th><th></th></tr></thead><tbody>
+    ${list.map((c, i) => `<tr><td><input type="text" data-i="${i}" data-k="name" value="${esc(c.name)}" maxlength="20" placeholder="예: 자리 선택권"></td><td><input type="text" inputmode="numeric" data-i="${i}" data-k="cost" value="${c.cost}" style="width:80px"></td><td><input type="text" data-i="${i}" data-k="desc" value="${esc(c.desc)}" maxlength="60" placeholder="설명"></td><td><button class="btn tiny danger tc-del" data-i="${i}">삭제</button></td></tr>`).join('')}
+    </tbody></table></div>
+    ${list.length ? '' : '<p class="muted small">쿠폰이 없어요. 추가해 보세요.</p>'}
+    <div class="btn-row"><button class="btn" id="tc-add">+ 쿠폰 추가</button><button class="btn primary" id="tc-save">쿠폰 저장</button></div>`;
+  const sync = () => $$('#t-coupons input[data-i]').forEach(inp => { const c = list[+inp.dataset.i]; if (!c) return; c[inp.dataset.k] = inp.dataset.k === 'cost' ? (Number(inp.value) || 0) : inp.value; });
+  $$('.tc-del').forEach(b => b.onclick = () => { sync(); list.splice(+b.dataset.i, 1); renderTCoupons(); });
+  $('#tc-add').onclick = () => { sync(); list.push({ id: 'cp' + Date.now().toString(36), name: '', cost: 100, desc: '' }); renderTCoupons(); };
+  $('#tc-save').onclick = async () => {
+    sync();
+    const r = await API.call({ action: 'saveCoupons', coupons: list }).catch(() => ({ ok: false, message: '연결 실패' }));
+    if (r.ok) { coupons = r.coupons; tAdmin.coupons = coupons.map(c => Object.assign({}, c)); renderTCoupons(); toast('쿠폰을 저장했어요', 'ok'); } else toast(r.message || '실패했어요', 'bad');
+  };
+}
+function renderTQuestions() {
+  const box = $('#t-questions'); if (!box) return;
+  const u = unitOf(tAdmin.unitId) || units[0]; tAdmin.unitId = u ? u.id : null;
+  const t = u && (u.topics.find(x => x.id === tAdmin.topicId) || u.topics[0]); tAdmin.topicId = t ? t.id : null;
+  box.innerHTML = `<h3>📝 형성평가 문항 관리 <small class="muted">— 성취기준마다 문항을 수정·추가·삭제</small></h3>
+    <div class="row-label">단원</div><select id="tq-unit">${units.map(x => `<option value="${esc(x.id)}" ${x.id === tAdmin.unitId ? 'selected' : ''}>${esc(x.subject)} · ${esc(x.title)}</option>`).join('')}</select>
+    <div class="row-label">성취기준</div><select id="tq-topic">${(u ? u.topics : []).map(x => `<option value="${esc(x.id)}" ${x.id === tAdmin.topicId ? 'selected' : ''}>${esc(x.code || '')} ${esc(x.standard.split('\n')[0].replace(/^\[[^\]]+\]\s*/, '').slice(0, 45))}</option>`).join('')}</select>
+    <div id="tq-list" style="margin-top:10px"><p class="muted small">불러오는 중...</p></div>`;
+  $('#tq-unit').onchange = e => { tAdmin.unitId = e.target.value; tAdmin.topicId = null; renderTQuestions(); };
+  $('#tq-topic').onchange = e => { tAdmin.topicId = e.target.value; renderTQuestions(); };
+  if (!t) { $('#tq-list').innerHTML = '<p class="muted">단원이 없어요.</p>'; return; }
+  API.call({ action: 'questions', topicId: t.id }).then(r => {
+    if (!r.ok) { $('#tq-list').innerHTML = '<p class="muted">' + esc(r.message || '불러오지 못했어요') + '</p>'; return; }
+    tAdmin.questions = r.questions.map(q => Object.assign({}, q)); tAdmin.source = r.source; renderTQList();
+  }).catch(() => { $('#tq-list').innerHTML = '<p class="muted">연결 실패</p>'; });
+}
+function renderTQList() {
+  const list = tAdmin.questions;
+  $('#tq-list').innerHTML = `<p class="muted small">${tAdmin.source === 'sheet' ? '문항 시트에 저장된 문항이에요.' : '아직 문항 시트에 없어서 기본 문항을 보여 줘요. 저장하면 문항 시트에 들어가요.'} 저장 후 5분 안에 학생 화면에 반영돼요.</p>
+    ${list.map((q, i) => `<div class="summary-card"><div class="meta"><span><b>Q${i + 1}</b> <select data-i="${i}" data-k="type"><option value="mc" ${q.type === 'mc' ? 'selected' : ''}>객관식</option><option value="short" ${q.type === 'short' ? 'selected' : ''}>단답형</option></select></span><button class="btn tiny danger tq-del" data-i="${i}">삭제</button></div>
+      <label>질문 <input type="text" data-i="${i}" data-k="q" value="${esc(q.q)}" maxlength="200"></label>
+      ${q.type === 'mc' ? `<div class="row-label">보기 (정답에 ● 표시)</div>${[0, 1, 2, 3].map(j => `<div style="display:flex;gap:6px;align-items:center;margin:4px 0"><input type="radio" name="ans${i}" value="${j}" ${q.answer === j ? 'checked' : ''}><input type="text" data-i="${i}" data-k="c${j}" value="${esc((q.choices || [])[j] || '')}" placeholder="보기 ${j + 1}" maxlength="60"></div>`).join('')}`
+        : `<label>정답 (여러 개면 ; 로 구분) <input type="text" data-i="${i}" data-k="answers" value="${esc((q.answers || []).join(';'))}" maxlength="100"></label>`}
+      <label>힌트 (틀렸을 때 보여 줄 발판) <input type="text" data-i="${i}" data-k="hint" value="${esc(q.hint || '')}" maxlength="120"></label></div>`).join('')}
+    ${list.length ? '' : '<p class="muted small">문항이 없어요. 추가해 보세요.</p>'}
+    <div class="btn-row"><button class="btn" id="tq-add-mc">+ 객관식 추가</button><button class="btn" id="tq-add-short">+ 단답형 추가</button><button class="btn primary" id="tq-save">문항 저장</button></div>`;
+  const sync = () => {
+    $$('#tq-list input[data-i], #tq-list select[data-i]').forEach(el => {
+      const q = list[+el.dataset.i], k = el.dataset.k; if (!q) return;
+      if (k === 'q' || k === 'hint') q[k] = el.value;
+      else if (k === 'answers') q.answers = el.value.split(';').map(x => x.trim()).filter(Boolean);
+      else if (/^c\d$/.test(k)) { q.choices = q.choices || ['', '', '', '']; q.choices[+k[1]] = el.value; }
+    });
+    list.forEach((q, i) => { if (q.type === 'mc') { const r = document.querySelector(`input[name=ans${i}]:checked`); q.answer = r ? +r.value : (q.answer || 0); } });
+  };
+  $$('#tq-list select[data-k=type]').forEach(s => s.onchange = () => { sync(); const q = list[+s.dataset.i]; q.type = s.value; if (q.type === 'mc') { q.choices = q.choices || ['', '', '', '']; q.answer = q.answer || 0; } else q.answers = q.answers || []; renderTQList(); });
+  $$('.tq-del').forEach(b => b.onclick = () => { sync(); list.splice(+b.dataset.i, 1); renderTQList(); });
+  $('#tq-add-mc').onclick = () => { sync(); list.push({ type: 'mc', q: '', choices: ['', '', '', ''], answer: 0, hint: '' }); renderTQList(); };
+  $('#tq-add-short').onclick = () => { sync(); list.push({ type: 'short', q: '', answers: [], hint: '' }); renderTQList(); };
+  $('#tq-save').onclick = async () => {
+    sync();
+    const payload = [];
+    for (const q of list) {
+      if (q.type === 'mc') {
+        const kept = (q.choices || []).map((c, j) => ({ c: String(c || '').trim(), j })).filter(x => x.c);
+        const answer = kept.findIndex(x => x.j === q.answer);
+        if (q.q.trim() && answer < 0) return toast(`"${q.q.slice(0, 15)}…" 문항의 정답 보기가 비어 있어요`, 'bad');
+        payload.push({ type: 'mc', q: q.q, choices: kept.map(x => x.c), answer, hint: q.hint });
+      } else payload.push({ type: 'short', q: q.q, answers: q.answers || [], hint: q.hint });
+    }
+    const r = await API.call({ action: 'saveQuestions', topicId: tAdmin.topicId, questions: payload }).catch(() => ({ ok: false, message: '연결 실패' }));
+    if (r.ok) { toast(`문항 ${r.count}개를 저장했어요`, 'ok'); tAdmin.source = 'sheet'; const t = topicOf(tAdmin.topicId); if (t) t.questions = payload.filter(q => q.q.trim()).map(q => ({ type: q.type, q: q.q, choices: q.choices })); }
+    else toast(r.message || '저장에 실패했어요', 'bad');
+  };
+}
+
+/* ---------------- 교사 모드 추가 기능: 접속 중 학생 · 학생 방 학습 상황 · 전체 학생 서재 ---------------- */
+const STUDENT_EMOJIS = ['🐶', '🐱', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯', '🦁', '🐮', '🐷', '🐸', '🐵', '🐤', '🦄', '🐙', '🐢', '🦋', '🐬', '🦉'];
+function emojiFor(id) { let h = 0; for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return STUDENT_EMOJIS[h % STUDENT_EMOJIS.length]; }
+let onlineList = [];
+function renderOnlineCard() {
+  if (!isTeacher()) return;
+  let card = $('#online-card');
+  if (!card) { card = document.createElement('div'); card.id = 'online-card'; card.className = 'card'; card.style.background = '#ecfdf5'; $('#room-panel').insertBefore(card, $('#room-panel').firstChild); }
+  card.innerHTML = `<h3>🟢 지금 접속 중인 학생 <small class="muted">${onlineList.length}명 · 최근 5분</small></h3>` +
+    (onlineList.length ? `<div class="chips">${onlineList.map(s => `<span class="chip" style="font-size:1rem">${emojiFor(s.id)} ${esc(s.name)} <small class="muted">${esc(s.id)}</small></span>`).join('')}</div>` : '<p class="muted small">아직 접속한 학생이 없어요. 1분마다 새로 확인해요.</p>');
+}
+async function pollOnline() {
+  try { const r = await API.call({ action: 'online' }); if (r.ok) { onlineList = r.students || []; if ($('#screen-room').classList.contains('active')) renderOnlineCard(); } } catch (e) { /* ignore */ }
+}
+function teacherVisitCard(v) {
+  const recs = (v.records || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+  const monsters = (v.monsterRooms || []).map(unitTitle);
+  return `<div class="card" style="background:#eef6ff"><h3>📊 학습 상황 <small class="muted">— 교사에게만 보여요</small></h3>
+    <p class="small">🪙 코인 ${v.coins ?? '-'} · 기록 ${recs.length}건 · 통과 ${recs.filter(r => r.pass).length}건${monsters.length ? ` · 👾 먼지 괴물: ${esc(monsters.join(', '))}` : ' · 먼지 괴물 없음'}</p>
+    ${recs.length ? `<div class="sheet-wrap"><table class="sheet"><thead><tr><th>날짜</th><th>성취기준</th><th>결과</th><th>점수</th><th>개념</th><th>퀴즈</th><th>시도</th><th>요약</th></tr></thead><tbody>
+      ${recs.slice(0, 60).map(r => `<tr><td>${shortDate(r.date)}</td><td>${esc(topicCode(r.topicId) || unitTitle(r.unitId))}</td><td>${r.pass ? '✅ 통과' : '❌ 재도전'}</td><td>${r.score}</td><td>${(r.opened || []).length}</td><td>${r.quiz ? r.quiz.correct + '/' + r.quiz.total : '-'}</td><td>${r.attempts}</td><td class="small">${esc(r.summary)}</td></tr>`).join('')}
+    </tbody></table></div>` : '<p class="muted small">아직 학습 기록이 없어요.</p>'}</div>`;
+}
+let tLib = { filter: '', rows: null };
+async function renderTeacherLibrary() {
+  const body = $('#library-body');
+  if (!tLib.rows) {
+    body.innerHTML = '<div class="card"><h2>📚 전체 학생 학습 정리</h2><p class="muted">불러오는 중...</p></div>';
+    try { const r = await API.call({ action: 'allSummaries' }); if (!r.ok) throw new Error(r.message || r.error); tLib.rows = r.rows || []; }
+    catch (e) { body.innerHTML = '<div class="card"><h2>📚 전체 학생 학습 정리</h2><p class="muted">불러오지 못했어요: ' + esc(e.message) + '</p></div>'; return; }
+  }
+  const rows = tLib.rows.filter(r => !tLib.filter || r.unitId === tLib.filter);
+  body.innerHTML = `<div class="card"><h2>📚 전체 학생 학습 정리 <small class="muted">${tLib.rows.length}건</small></h2>
+    <p class="muted small">학생들이 제출한 요약 전체예요(통과·재도전 모두). 점수와 열린 개념 수는 교사에게만 보여요.</p>
+    <div class="btn-row"><select id="tl-unit"><option value="">모든 단원</option>${units.map(u => `<option value="${esc(u.id)}" ${tLib.filter === u.id ? 'selected' : ''}>${esc(u.subject)} · ${esc(u.title)}</option>`).join('')}</select><button class="btn" id="tl-refresh">새로 고침</button></div></div>
+    <div class="card">${rows.length ? rows.map(r => `<div class="rec"><div class="meta"><b>${emojiFor(r.id)} ${esc(r.name)} <small>${esc(r.id)}</small></b><span>${shortDate(r.date)}</span><span>${esc(unitTitle(r.unitId))}${topicCode(r.topicId) ? ' · ' + esc(topicCode(r.topicId)) : ''}</span>
+      <span class="tag ${r.pass ? 'pass' : 'fail'}">${r.pass ? '통과' : '재도전'}</span><span>${r.score}점</span><span>개념 ${r.opened}개</span><span>퀴즈 ${r.quiz || '-'}</span><span>${r.attempts}회</span></div><div class="text">${esc(r.summary)}</div></div>`).join('') : '<p class="muted">기록이 없어요.</p>'}</div>`;
+  $('#tl-unit').onchange = e => { tLib.filter = e.target.value; renderTeacherLibrary(); };
+  $('#tl-refresh').onclick = () => { tLib.rows = null; renderTeacherLibrary(); };
 }
 
 /* ---------------- 시작 ---------------- */
@@ -756,7 +891,7 @@ async function init() {
   try {
     const r = await API.call({ action: 'load' });
     if (!r.ok) { if (r.error === 'night_lock') { $('#overlay-login').classList.add('hidden'); return $('#overlay-lock').classList.remove('hidden'); } API.clearSession(); return renderLogin('login', r.message || '다시 로그인해 주세요'); }
-    setTopics(r.units); state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
+    setTopics(r.units); if (r.coupons) coupons = r.coupons; state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
     $('#overlay-login').classList.add('hidden'); start();
   } catch (e) { renderLogin('login', '서버에 연결할 수 없어요. 인터넷을 확인한 뒤 다시 들어와 주세요.'); }
 }

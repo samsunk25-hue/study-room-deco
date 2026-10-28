@@ -213,7 +213,7 @@ const Engine = (() => {
         return { ok: true, result: { uid: it.uid } };
       }
       case 'buyCoupon': {
-        const cp = CONFIG.coupons.find(c => c.id === cmd.id); if (!cp) return fail('없는 쿠폰이에요');
+        const cp = (ctx.coupons || CONFIG.coupons).find(c => c.id === cmd.id); if (!cp) return fail('없는 쿠폰이에요');
         if (!spend(cp.cost)) return fail(`코인이 부족해요 (🪙 ${cp.cost} 필요)`);
         state.coupons.push({ id: cp.id, name: cp.name, date: ctx.today, status: 'pending' });
         state.pendingApprovals.push({ type: 'coupon', id: cp.id, name: cp.name, date: ctx.today });
