@@ -23,8 +23,11 @@ const CONFIG = {
   minLength: 30,      // 최소 글자 수
   passRatio: 0.6,     // 핵심 개념 포함 비율 (0.6 → 5개 중 3개)
 
-  // 보상
-  rewards: { baseCoin: 50, quizCoin: 10, firstTryBonus: 20, monsterBonus: 15 },
+  // 보상 (성취기준 하나를 하루 1회 기준으로)
+  //  conceptCoin : 요약에서 핵심 개념이 하나 "열릴" 때마다 (같은 날 같은 성취기준에서 새로 연 개념만)
+  //  quizCoin    : 형성평가 정답 1개당 (하루 1회)
+  //  passCoin    : 요약 통과 보너스 + 가구 상자 (하루 1회)
+  rewards: { conceptCoin: 10, quizCoin: 10, passCoin: 30, firstTryBonus: 20, monsterBonus: 15 },
   recolorCost: 20,
   restyleCost: 30,
   wallpaperCost: 50,

@@ -3,18 +3,35 @@
  *  상태(state)를 받아 명령(cmd)을 적용하는 순수 함수 모음.
  *  서버 모드에서는 이 파일이 서버에서 실행되어 코인·보상·판정을 결정한다.
  *  (catalog.js, judge.js 가 먼저 로드되어 있어야 함)
+ *
+ *  용어: topic = 성취기준 하나(문항·핵심 개념 보유), unit = 같은 단원명의 topic 묶음(= 방 하나)
  * ===================================================================== */
 const Engine = (() => {
   const N = 8;
   const VERSION = 2;
   const DEFAULT_ROOM = () => ({ wall: '#f6ecdc', floor: '#d8b07c', inventory: [], monster: null });
+  const R = () => Object.assign({ conceptCoin: 10, quizCoin: 10, passCoin: 30, firstTryBonus: 20, monsterBonus: 15 }, CONFIG.rewards || {});
+
+  /* ---------- 단원 묶기 ---------- */
+  function unitIdOf(t) { return t.unitId || String(t.id).replace(/_\d\d$/, ''); }
+  /** 평탄한 topic 목록 → [{ id, subject, title, topics[] }] (순서 유지) */
+  function groupUnits(topics) {
+    const map = {}, out = [];
+    (topics || []).forEach(t => {
+      const uid = unitIdOf(t);
+      if (!map[uid]) { map[uid] = { id: uid, subject: t.subject, title: t.title, topics: [] }; out.push(map[uid]); }
+      map[uid].topics.push(t);
+    });
+    return out;
+  }
+  function topicsOf(ctx) { return ctx.topics || ctx.units || []; }
 
   /* ---------- 상태 생성 / 마이그레이션 (앱이 업데이트되어도 기존 데이터 보존) ---------- */
   function newState(student, today) {
     return {
       version: VERSION, student, coins: 0, uidSeq: 1,
       rooms: {},                 // unitId → { wall, floor, inventory[], monster }
-      records: [],               // { date, unitId, attempts, rewarded, quiz, summary, score, pass, hits, reason, reward }
+      records: [],               // { date, topicId, unitId, attempts, quizRewarded, passRewarded, opened[], quiz, summary, score, pass, hits, reason, reward }
       coupons: [], conceptMaps: {}, photoMonths: {},
       settings: { privacy: 'knock', bypassLock: false, eventForce: false },
       synergyLog: {}, pendingApprovals: [], stickerLog: {},
@@ -24,8 +41,8 @@ const Engine = (() => {
   function migrate(state, units) {
     if (!state || typeof state !== 'object') return null;
     if (!state.version || state.version < 2) {
-      // v1: 방 하나 → v2: 단원별 방. 기존 가구는 첫 단원의 방으로 옮겨 보존
-      const key = (units && units[0] && units[0].id) || 'home';
+      const first = units && units[0];                       // 묶인 단원({id}) 또는 topic({unitId}) 둘 다 허용
+      const key = first ? (first.unitId || first.id) : 'home';
       const r = DEFAULT_ROOM();
       if (state.room) { r.wall = state.room.wall || r.wall; r.floor = state.room.floor || r.floor; }
       r.inventory = state.inventory || []; r.monster = state.monster || null;
@@ -37,6 +54,13 @@ const Engine = (() => {
     for (const k of Object.keys(base)) if (state[k] === undefined) state[k] = base[k];
     for (const k of Object.keys(base.settings)) if (state.settings[k] === undefined) state.settings[k] = base.settings[k];
     Object.keys(state.rooms).forEach(k => { const d = DEFAULT_ROOM(); for (const f of Object.keys(d)) if (state.rooms[k][f] === undefined) state.rooms[k][f] = d[f]; });
+    // 성취기준 단위 이전 기록 보정
+    state.records.forEach(r => {
+      if (!r.topicId) r.topicId = r.unitId;
+      if (!Array.isArray(r.opened)) r.opened = (r.hits || []).slice();
+      if (r.passRewarded === undefined) r.passRewarded = !!r.rewarded;
+      if (r.quizRewarded === undefined) r.quizRewarded = !!r.rewarded;
+    });
     return state;
   }
 
@@ -79,56 +103,68 @@ const Engine = (() => {
   function normAns(s) { return String(s === undefined || s === null ? '' : s).replace(/\s/g, '').toLowerCase(); }
 
   /* ---------- 형성평가 채점 ---------- */
-  function grade(unit, answers) {
-    return unit.questions.map((q, i) => {
+  function grade(topic, answers) {
+    return topic.questions.map((q, i) => {
       const a = answers ? answers[i] : null;
       const ok = q.type === 'mc' ? Number(a) === q.answer : (q.answers || []).some(x => normAns(x) === normAns(a));
       return { ok, hint: ok ? '' : q.hint };
     });
   }
 
-  /* ---------- 요약 제출 (판정 + 기록 + 보상 + 먼지 괴물) ---------- */
-  function submit(state, unit, answers, text, today, rng) {
-    const g = grade(unit, answers);
+  /* ---------- 요약 제출 (판정 + 기록 + 부분 보상 + 먼지 괴물) ---------- */
+  function submit(state, topic, answers, text, today, rng) {
+    const rw = R();
+    const unitId = unitIdOf(topic);
+    const g = grade(topic, answers);
     const qs = { correct: g.filter(x => x.ok).length, total: g.length };
-    const j = Judge.evaluate(text, unit);
+    const j = Judge.evaluate(text, topic);
     const res = { pass: j.pass, score: j.score, hits: j.hits, total: j.total, hint: j.hint, feedback: j.feedback, reason: j.reason };
 
-    let rec = state.records.find(r => r.unitId === unit.id && r.date === today);
-    if (!rec) { rec = { date: today, unitId: unit.id, attempts: 0, rewarded: false, quiz: qs, summary: '', score: 0, pass: false, hits: [] }; state.records.push(rec); }
-    rec.attempts++; rec.summary = text; rec.score = res.score; rec.pass = res.pass; rec.hits = res.hits; rec.reason = res.reason; rec.quiz = qs;
+    let rec = state.records.find(r => r.topicId === topic.id && r.date === today);
+    if (!rec) {
+      rec = { date: today, topicId: topic.id, unitId, attempts: 0, quizRewarded: false, passRewarded: false, opened: [], quiz: qs, summary: '', score: 0, pass: false, hits: [] };
+      state.records.push(rec);
+    }
+    rec.attempts++; rec.summary = text; rec.score = res.score; rec.pass = res.pass || rec.pass; rec.hits = res.hits; rec.reason = res.reason; rec.quiz = qs;
 
-    const r = room(state, unit.id);
-    const outcome = { purified: false, coins: 0, itemId: null, itemUid: null, practice: false, monster: null };
+    // 개념이 "열린" 개수만큼 부분 보상 (같은 날 같은 성취기준에서 새로 연 개념만)
+    const newly = res.hits.filter(h => !rec.opened.includes(h));
+    rec.opened = rec.opened.concat(newly);
+    const bd = { concept: newly.length * rw.conceptCoin, quiz: 0, pass: 0, first: 0, monster: 0 };
+    if (!rec.quizRewarded) { bd.quiz = qs.correct * rw.quizCoin; rec.quizRewarded = true; }
+
+    const r = room(state, unitId);
+    const outcome = { purified: false, itemId: null, itemUid: null, practice: false, monster: null, newlyOpened: newly, opened: rec.opened.length, total: topic.keyConcepts.length };
     if (res.pass) {
       if (r.monster) {
-        outcome.purified = true; outcome.coins += CONFIG.rewards.monsterBonus;
+        outcome.purified = true; bd.monster = rw.monsterBonus;
         outcome.monsterAt = { x: r.monster.x, y: r.monster.y };
         r.monster = null;
       }
-      if (!rec.rewarded) {
-        rec.rewarded = true;
-        outcome.coins += CONFIG.rewards.baseCoin + CONFIG.rewards.quizCoin * qs.correct + (rec.attempts === 1 ? CONFIG.rewards.firstTryBonus : 0);
+      if (!rec.passRewarded) {
+        rec.passRewarded = true;
+        bd.pass = rw.passCoin; if (rec.attempts === 1) bd.first = rw.firstTryBonus;
         outcome.itemId = rollItem(state, today, rng);
-        outcome.itemUid = addItem(state, unit.id, outcome.itemId, today).uid;
-        rec.reward = { coins: outcome.coins, itemId: outcome.itemId };
+        outcome.itemUid = addItem(state, unitId, outcome.itemId, today).uid;
       } else outcome.practice = true;
-      state.coins += outcome.coins;
-    } else if (!r.monster) {
-      r.monster = Object.assign(randomFreeTile(r, rng), { unitId: unit.id, since: today });
+    } else if (!r.monster && res.reason !== 'too_short') {
+      r.monster = Object.assign(randomFreeTile(r, rng), { unitId, topicId: topic.id, since: today });
       outcome.monster = r.monster;
     }
-    return { res, outcome, quiz: g, record: { date: rec.date, attempts: rec.attempts, rewarded: rec.rewarded } };
+    outcome.breakdown = bd;
+    outcome.coins = bd.concept + bd.quiz + bd.pass + bd.first + bd.monster;
+    state.coins += outcome.coins;
+    rec.reward = { coins: (rec.reward ? rec.reward.coins : 0) + outcome.coins, itemId: outcome.itemId || (rec.reward && rec.reward.itemId) || null };
+    return { res, outcome, quiz: g, record: { date: rec.date, attempts: rec.attempts, passRewarded: rec.passRewarded, opened: rec.opened } };
   }
 
   /* ---------- 명령 적용 ----------
    *  cmd.type: layout | restyle | wallpaper | buyFrame | buyCoupon | photo | conceptFrame | settings | submit
-   *  ctx: { units, today, rng }
+   *  ctx: { topics(또는 units), today, rng }
    *  반환: { ok, error?, result? }   (ok=false 이면 state 는 변경되지 않음)
    */
   function apply(state, cmd, ctx) {
     if (!cmd || typeof cmd !== 'object') return { ok: false, error: '잘못된 요청이에요' };
-    const unitOf = id => (ctx.units || []).find(u => u.id === id);
     const fail = msg => ({ ok: false, error: msg });
     const spend = cost => { if (state.coins < cost) return false; state.coins -= cost; return true; };
 
@@ -211,11 +247,12 @@ const Engine = (() => {
         return { ok: true };
       }
       case 'submit': {
-        const unit = unitOf(cmd.unitId); if (!unit) return fail('단원을 찾을 수 없어요');
-        if (!unit.keyConcepts) return fail('이 단원은 서버에서만 판정할 수 있어요');
+        const tid = cmd.topicId || cmd.unitId;
+        const topic = topicsOf(ctx).find(t => t.id === tid); if (!topic) return fail('성취기준을 찾을 수 없어요');
+        if (!topic.keyConcepts) return fail('이 성취기준은 서버에서만 판정할 수 있어요');
         const text = String(cmd.text || '').slice(0, 2000);
         if (!text.trim()) return fail('요약을 입력해 주세요');
-        return { ok: true, result: submit(state, unit, cmd.answers || {}, text, ctx.today, ctx.rng || Math.random) };
+        return { ok: true, result: submit(state, topic, cmd.answers || {}, text, ctx.today, ctx.rng || Math.random) };
       }
       default:
         return fail('알 수 없는 명령이에요');
@@ -230,9 +267,9 @@ const Engine = (() => {
       rooms[k] = { wall: r.wall, floor: r.floor, monster: null,
         inventory: r.inventory.filter(i => i.placed && !(i.id === 'photo_frame' && !i.approved)).map(i => Object.assign({}, i)) };
     });
-    const summaries = state.records.filter(r => r.pass).map(r => ({ key: r.date + '|' + r.unitId, date: r.date, unitId: r.unitId, text: r.summary }));
+    const summaries = state.records.filter(r => r.pass).map(r => ({ key: r.date + '|' + (r.topicId || r.unitId), date: r.date, unitId: r.unitId, topicId: r.topicId || r.unitId, text: r.summary }));
     return { name: state.student ? state.student.name : '', rooms, summaries };
   }
 
-  return { VERSION, N, newState, migrate, room, footprint, randomFreeTile, addItem, eventActive, rollItem, monthStats, grade, submit, apply, publicView };
+  return { VERSION, N, newState, migrate, room, footprint, randomFreeTile, addItem, eventActive, rollItem, monthStats, grade, submit, apply, publicView, groupUnits, unitIdOf };
 })();

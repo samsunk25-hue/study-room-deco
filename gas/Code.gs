@@ -202,11 +202,14 @@ function parseUnit_(r) {
       if (/^객관식/.test(p[0])) u.questions.push({ type: 'mc', q: p[1], choices: (p[2] || '').split(';').map(x => x.trim()), answer: Number(p[3]) - 1, hint: p[4] || '' });
       else if (/^단답형/.test(p[0])) u.questions.push({ type: 'short', q: p[1], answers: (p[2] || '').split(';').map(x => x.trim()).filter(Boolean), hint: p[3] || '' });
     });
+    // 한 행 = 성취기준(topic). 같은 단원(unitId)의 행들이 한 방으로 묶임
+    u.unitId = u.id.replace(/_\d\d$/, '');
+    const cm = /\[(9과\d\d-\d\d)\]/.exec(u.standard); u.code = cm ? cm[1] : '';
     return u.keyConcepts.length ? u : null;
   } catch (e) { return null; }
 }
 function publicUnits_(units) {
-  return units.map(u => ({ id: u.id, subject: u.subject, title: u.title, standard: u.standard, conceptCount: u.keyConcepts.length,
+  return units.map(u => ({ id: u.id, unitId: u.unitId, code: u.code, subject: u.subject, title: u.title, standard: u.standard, conceptCount: u.keyConcepts.length,
     questions: u.questions.map(q => ({ type: q.type, q: q.q, choices: q.choices })) }));
 }
 
@@ -360,7 +363,7 @@ function doPost(e) {
       case 'load': return json_({ ok: true, state: loadState_(acc, true), units: publicUnits_(loadUnits_()), inbox: inbox_(acc) });
       case 'cmd': return json_(command_(acc, body.cmd, today));
       case 'grade': {
-        const u = loadUnits_().find(x => x.id === body.unitId); if (!u) return json_(fail_('no_unit', '단원을 찾을 수 없어요'));
+        const u = loadUnits_().find(x => x.id === (body.topicId || body.unitId)); if (!u) return json_(fail_('no_unit', '성취기준을 찾을 수 없어요'));
         return json_({ ok: true, result: Engine.grade(u, body.answers || {}) });
       }
       case 'changePassword': return json_(changePassword_(acc, body));
@@ -383,7 +386,7 @@ function command_(acc, cmd, today) {
   if (!cmd || typeof cmd !== 'object') return fail_('bad_cmd');
   const units = loadUnits_();
   const state = loadState_(acc, false);
-  const r = Engine.apply(state, cmd, { units, today, rng: Math.random });
+  const r = Engine.apply(state, cmd, { topics: units, units, today, rng: Math.random });
   if (!r.ok) return fail_('rejected', r.error);
   if (cmd.type === 'settings' && acc.row > 0) { sheet_(SHEETS.accounts, ACC_HEADER).getRange(acc.row, ACC.privacy + 1).setValue(state.settings.privacy); uncache_(acc.id); }
   flushPendingApprovals_(acc, state);
@@ -442,7 +445,9 @@ function fillSampleUnits() {
     u.questions.map(q => q.type === 'mc' ? ['객관식', q.q, q.choices.join(';'), q.answer + 1, q.hint].join(' | ') : ['단답형', q.q, q.answers.join(';'), q.hint].join(' | ')).join('\n'),
     true];
   // 초기 버전의 예시 단원(과학 외 과목 포함)은 자동 삭제
+  // (초기 예시 4개 + 대단원 단위였던 23개 행. 지금은 한 행 = 성취기준 하나)
   const LEGACY_IDS = ['sci_state', 'sci_photo', 'his_sabi', 'math_eq'];
+  for (let i = 1; i <= 23; i++) LEGACY_IDS.push((i <= 7 ? 'sci1_' : i <= 15 ? 'sci2_' : 'sci3_') + ('0' + i).slice(-2));
   let removed = 0;
   for (let r = sh.getLastRow(); r >= 2; r--) { if (LEGACY_IDS.includes(String(sh.getRange(r, 1).getValue()))) { sh.deleteRow(r); removed++; } }
   // 같은 단원ID 는 덮어쓰고(upsert), 없는 것만 추가 → 여러 번 눌러도 중복되지 않음
@@ -477,7 +482,7 @@ function syncRecords() {
   const cols = Array.from(dates).sort();
   const out = [['학번', '이름'].concat(cols.map(d => d.slice(5).replace('-', '/')))];
   data.forEach(d => out.push([d.id, d.name].concat(cols.map(c => d.records.filter(x => x.date === c)
-    .map(x => `[${x.unitId}] ${x.pass ? '통과' : '재도전'} ${x.score}점 · 퀴즈 ${x.quiz ? x.quiz.correct + '/' + x.quiz.total : '-'} · ${x.attempts}회\n${x.summary}`).join('\n\n')))));
+    .map(x => `[${x.topicId || x.unitId}] ${x.pass ? '통과' : '재도전'} ${x.score}점 · 개념 ${(x.opened || x.hits || []).length}개 · 퀴즈 ${x.quiz ? x.quiz.correct + '/' + x.quiz.total : '-'} · ${x.attempts}회\n${x.summary}`).join('\n\n')))));
   sh.clearContents();
   sh.getRange(1, 1, out.length, out[0].length).setValues(out);
   sh.getRange(2, 1, Math.max(1, out.length - 1), 1).setNumberFormat('@');

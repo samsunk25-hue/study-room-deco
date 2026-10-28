@@ -10,7 +10,7 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const pad = n => String(n).padStart(2, '0');
 
-let state = null, units = [], currentRoomId = null, serverOffset = 0;
+let state = null, topics = [], units = [], currentRoomId = null, serverOffset = 0;
 let myRoom = null, visitRoom = null;
 let study = { step: 'units' };
 let teacherOpen = false;
@@ -22,8 +22,11 @@ let pollTimer = null;
 function todayKey(d = new Date(Date.now() + serverOffset)) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
 function monthKey() { return todayKey().slice(0, 7); }
 function shortDate(key) { return key.slice(5).replace('-', '/'); }
-function ctx() { return { units, today: todayKey(), rng: Math.random }; }
+function ctx() { return { topics, units, today: todayKey(), rng: Math.random }; }
 function unitOf(id) { return units.find(u => u.id === id); }
+function topicOf(id) { return topics.find(t => t.id === id); }
+function topicCode(id) { const t = topicOf(id); return t && t.code ? t.code : ''; }
+function setTopics(list) { topics = list || []; units = Engine.groupUnits(topics); }
 function unitTitle(id) { const u = unitOf(id); return u ? u.title : (id === 'home' ? '처음 방' : '이전 단원'); }
 let toastTimer;
 function toast(msg, type = '') {
@@ -81,7 +84,7 @@ async function dispatch(cmd, interactive = false) {
 async function reloadFromServer() {
   try {
     const r = await API.call({ action: 'load' });
-    if (r.ok) { state = Engine.migrate(r.state, units); units = r.units || units; inbox = r.inbox || inbox; updateHeader(); refreshCurrent(); }
+    if (r.ok) { if (r.units) setTopics(r.units); state = Engine.migrate(r.state, units); inbox = r.inbox || inbox; updateHeader(); refreshCurrent(); }
     else handleServerError(r);
   } catch (e) { /* 다음 기회에 */ }
 }
@@ -185,7 +188,7 @@ async function auth(action, payload) {
     const r = await API.call(Object.assign({ action }, payload));
     if (!r.ok) { if (r.error === 'night_lock') { $('#overlay-login').classList.add('hidden'); $('#overlay-lock').classList.remove('hidden'); return; } return renderLogin(mode, r.message || '로그인에 실패했어요'); }
     API.setSession({ token: r.token, id: r.id || payload.id, name: r.name, teacher: !!r.teacher });
-    units = r.units || []; state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
+    setTopics(r.units); state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
     $('#overlay-login').classList.add('hidden');
     if (r.mustChange) changePasswordModal(true);
     start();
@@ -280,10 +283,10 @@ function renderRoomPanel() {
   const mc = $('#monster-card');
   mc.classList.toggle('hidden', !room.monster);
   if (room.monster) {
-    const u = unitOf(room.monster.unitId);
-    mc.innerHTML = `<h3>👾 오개념 먼지 괴물이 나타났어요!</h3><p class="small"><b>${esc(u ? u.title : unitTitle(room.monster.unitId))}</b> 요약에 재도전해서 통과하면 괴물이 정화되고 보너스 코인(🪙 ${CONFIG.rewards.monsterBonus})을 받아요.</p>
-      ${u ? '<button class="btn primary" id="btn-retry-monster">다시 도전하기</button>' : ''}`;
-    const b = $('#btn-retry-monster'); if (b) b.onclick = () => { study = { step: 'quiz', unit: u, answers: {}, graded: false }; showScreen('study'); };
+    const u = unitOf(room.monster.unitId); const t = topicOf(room.monster.topicId);
+    mc.innerHTML = `<h3>👾 오개념 먼지 괴물이 나타났어요!</h3><p class="small"><b>${esc(u ? u.title : unitTitle(room.monster.unitId))}${t ? ' · ' + esc(t.code || '') : ''}</b> 요약에 재도전해서 통과하면 괴물이 정화되고 보너스 코인(🪙 ${CONFIG.rewards.monsterBonus})을 받아요.</p>
+      ${u && t ? '<button class="btn primary" id="btn-retry-monster">다시 도전하기</button>' : ''}`;
+    const b = $('#btn-retry-monster'); if (b) b.onclick = () => { study = { step: 'quiz', unit: u, topic: t, answers: {}, graded: false }; showScreen('study'); };
   }
 
   const syn = myRoom.checkSynergies();
@@ -366,38 +369,55 @@ function steps(cur) {
 }
 function renderStudy() {
   const body = $('#study-body');
+  const todayRecs = state.records.filter(r => r.date === todayKey());
+  const recOf = tid => todayRecs.find(r => r.topicId === tid);
   if (study.step === 'units') {
-    body.innerHTML = `<div class="card"><h2>📝 오늘 배운 내용 정리하기</h2><p class="muted">단원을 고르고 형성평가를 푼 뒤, 배운 내용을 한 줄로 요약해요. 통과하면 코인과 <b>그 단원 방의 가구 상자</b>를 받아요! (보상은 단원마다 하루 1회)</p></div>
+    body.innerHTML = `<div class="card"><h2>📝 오늘 배운 내용 정리하기</h2><p class="muted">단원을 고르고 <b>성취기준</b>을 하나 골라요. 그 성취기준의 형성평가를 풀고 배운 내용을 요약하면, <b>요약에서 열린 개념 수만큼 코인</b>을 받고 통과하면 가구 상자도 받아요. (성취기준마다 하루 1회)</p></div>
       ${units.length ? `<div class="unit-grid">${units.map(u => {
-        const r = getRecord(u.id);
-        const st = !r ? '<span class="state muted">아직 안 했어요</span>' : r.pass ? `<span class="state pass">✅ 통과 (${r.score}점)</span>` : `<span class="state retry">👾 재도전 필요 (${r.attempts}회 시도)</span>`;
+        const done = u.topics.filter(t => { const r = recOf(t.id); return r && r.pass; }).length;
+        const tried = u.topics.filter(t => recOf(t.id)).length;
+        const st = done === u.topics.length ? `<span class="state pass">✅ 오늘 ${done}/${u.topics.length} 모두 통과</span>` : tried ? `<span class="state">🔓 오늘 ${done}/${u.topics.length} 통과 · ${tried}개 도전</span>` : `<span class="state muted">성취기준 ${u.topics.length}개</span>`;
         return `<div class="card unit-card" data-unit="${esc(u.id)}"><div class="subject">${esc(u.subject)}</div><div class="title">${esc(u.title)}</div>${st}</div>`;
       }).join('')}</div>` : '<div class="card muted">아직 등록된 단원이 없어요. 선생님이 단원 시트에 입력하면 나타나요.</div>'}`;
-    $$('.unit-card').forEach(el => el.onclick = () => { study = { step: 'quiz', unit: unitOf(el.dataset.unit), answers: {}, graded: false }; renderStudy(); });
+    $$('.unit-card').forEach(el => el.onclick = () => { study = { step: 'topics', unit: unitOf(el.dataset.unit) }; renderStudy(); });
     return;
   }
   const u = study.unit;
+  if (study.step === 'topics') {
+    body.innerHTML = `<div class="card"><div class="subject muted small">${esc(u.subject)}</div><h2>${esc(u.title)}</h2><p class="muted small">성취기준을 하나 골라요. 형성평가와 요약은 그 성취기준의 내용만 다뤄요.</p>
+      ${u.topics.map(t => {
+        const r = recOf(t.id); const total = t.conceptCount || (t.keyConcepts ? t.keyConcepts.length : 0);
+        const st = !r ? '<span class="state muted">아직 안 했어요</span>' : r.pass ? `<span class="state pass">✅ 통과 · 개념 ${r.opened.length}/${total} 열림 · 🪙 ${r.reward ? r.reward.coins : 0}</span>` : `<span class="state retry">🔓 개념 ${r.opened.length}/${total} 열림 · 🪙 ${r.reward ? r.reward.coins : 0} · 재도전 가능</span>`;
+        return `<div class="card unit-card topic-card" data-topic="${esc(t.id)}"><div class="subject">${esc(t.code || '')}</div><div class="small" style="margin:4px 0 6px">${esc(t.standard.split('\n')[0].replace(/^\[[^\]]+\]\s*/, ''))}</div>${st}</div>`;
+      }).join('')}
+      <div class="btn-row"><button class="btn ghost" id="btn-back">← 단원 선택</button></div></div>`;
+    $('#btn-back').onclick = () => { study = { step: 'units' }; renderStudy(); };
+    $$('.topic-card').forEach(el => el.onclick = () => { study = { step: 'quiz', unit: u, topic: topicOf(el.dataset.topic), answers: {}, graded: false }; renderStudy(); });
+    return;
+  }
+  const t = study.topic;
   if (study.step === 'quiz') {
-    body.innerHTML = `<div class="card">${steps('quiz')}<div class="subject muted small">${esc(u.subject)}</div><h2>${esc(u.title)} — 형성평가</h2>
-      ${u.questions.map((q, i) => `<div class="q" data-i="${i}"><div class="qt">Q${i + 1}. ${esc(q.q)}</div>
+    body.innerHTML = `<div class="card">${steps('quiz')}<div class="subject muted small">${esc(u.subject)} · ${esc(u.title)}</div><h2>${esc(t.code || '')} 형성평가</h2>
+      <div class="standard">🎯 ${esc(t.standard.split('\n')[0])}</div>
+      ${t.questions.map((q, i) => `<div class="q" data-i="${i}" style="margin-top:12px"><div class="qt">Q${i + 1}. ${esc(q.q)}</div>
         ${q.type === 'mc' ? `<div class="choices">${q.choices.map((c, j) => `<label class="choice"><input type="radio" name="q${i}" value="${j}" ${study.graded ? 'disabled' : ''} ${study.answers[i] == j ? 'checked' : ''}><span>${esc(c)}</span></label>`).join('')}</div>`
           : `<input type="text" class="short" data-i="${i}" placeholder="답을 입력하세요" value="${esc(study.answers[i] || '')}" ${study.graded ? 'disabled' : ''}>`}
         <div class="feedback" id="fb${i}"></div></div>`).join('')}
       <div class="btn-row">
         ${study.graded ? '<button class="btn primary big" id="btn-next">요약 쓰러 가기 →</button>' : '<button class="btn primary big" id="btn-grade">채점하기</button>'}
-        <button class="btn ghost" id="btn-back">← 단원 선택</button></div></div>`;
-    $('#btn-back').onclick = () => { study = { step: 'units' }; renderStudy(); };
+        <button class="btn ghost" id="btn-back">← 성취기준 선택</button></div></div>`;
+    $('#btn-back').onclick = () => { study = { step: 'topics', unit: u }; renderStudy(); };
     if (study.graded) { showQuizFeedback(); $('#btn-next').onclick = () => { study.step = 'summary'; renderStudy(); }; }
     else $('#btn-grade').onclick = async () => {
-      u.questions.forEach((q, i) => {
+      t.questions.forEach((q, i) => {
         if (q.type === 'mc') { const c = document.querySelector(`input[name=q${i}]:checked`); study.answers[i] = c ? +c.value : null; }
         else study.answers[i] = $(`.short[data-i="${i}"]`).value.trim();
       });
-      if (u.questions.some((q, i) => study.answers[i] === null || study.answers[i] === '')) return toast('모든 문항에 답해 주세요', 'bad');
+      if (t.questions.some((q, i) => study.answers[i] === null || study.answers[i] === '')) return toast('모든 문항에 답해 주세요', 'bad');
       $('#btn-grade').disabled = true;
-      if (MODE === 'local') study.grade = Engine.grade(u, study.answers);
+      if (MODE === 'local') study.grade = Engine.grade(t, study.answers);
       else {
-        try { const r = await API.call({ action: 'grade', unitId: u.id, answers: study.answers }); if (!r.ok) return handleServerError(r), $('#btn-grade').disabled = false; study.grade = r.result; }
+        try { const r = await API.call({ action: 'grade', topicId: t.id, answers: study.answers }); if (!r.ok) return handleServerError(r), $('#btn-grade').disabled = false; study.grade = r.result; }
         catch (e) { $('#btn-grade').disabled = false; return toast('인터넷 연결을 확인해 주세요', 'bad'); }
       }
       study.graded = true; renderStudy();
@@ -405,9 +425,10 @@ function renderStudy() {
     return;
   }
   if (study.step === 'summary') {
-    body.innerHTML = `<div class="card">${steps('summary')}<h2>${esc(u.title)} — 오늘 배운 내용 요약</h2>
-      <div class="standard">🎯 ${esc(u.standard)}</div>
-      <p class="small muted" style="margin:10px 0 6px">핵심 개념들이 <b>왜, 어떻게</b> 연결되는지 친구에게 설명하듯 자기 말로 써 보세요. 교과서를 그대로 베끼면 통과하지 못해요.</p>
+    const total = t.conceptCount || (t.keyConcepts ? t.keyConcepts.length : 0);
+    body.innerHTML = `<div class="card">${steps('summary')}<div class="subject muted small">${esc(u.subject)} · ${esc(u.title)}</div><h2>${esc(t.code || '')} 배운 내용 요약</h2>
+      <div class="standard">🎯 ${esc(t.standard.split('\n')[0])}</div>
+      <p class="small muted" style="margin:10px 0 6px">이 성취기준의 핵심 개념 <b>${total}개</b>가 숨어 있어요. 개념을 하나 쓸 때마다 열리고 🪙 ${CONFIG.rewards.conceptCoin}씩 받아요. 개념들이 <b>왜, 어떻게</b> 연결되는지 자기 말로 써야 통과해요.</p>
       <textarea id="summary-text" placeholder="예) ~하기 때문에 ~가 되고, 그래서 ~한다.">${esc(study.text || '')}</textarea>
       <div class="counter"><span id="char-count">0</span>자 / 최소 ${CONFIG.minLength}자</div>
       ${study.result && !study.result.pass ? `<div class="hintbox">💡 <b>발판 힌트</b> — ${esc(study.result.hint)}</div>` : ''}
@@ -420,7 +441,7 @@ function renderStudy() {
   if (study.step === 'result') renderResult();
 }
 function showQuizFeedback() {
-  study.unit.questions.forEach((q, i) => {
+  study.topic.questions.forEach((q, i) => {
     const g = study.grade[i], fb = $(`#fb${i}`);
     if (q.type === 'mc') $$(`.q[data-i="${i}"] .choice`).forEach((el, j) => { if (j === study.answers[i]) el.classList.add(g.ok ? 'correct' : 'wrong'); });
     fb.className = 'feedback ' + (g.ok ? 'ok' : 'bad');
@@ -436,7 +457,7 @@ async function submitSummary() {
   submitting = true; $('#btn-submit').disabled = true;
   showLoading(true);
   const started = Date.now();
-  const r = await dispatch({ type: 'submit', unitId: study.unit.id, answers: study.answers, text }, true);
+  const r = await dispatch({ type: 'submit', topicId: study.topic.id, answers: study.answers, text }, true);
   await new Promise(res => setTimeout(res, Math.max(0, 2600 - (Date.now() - started))));
   showLoading(false); submitting = false;
   if (!r.ok) { renderStudy(); return; }
@@ -448,24 +469,27 @@ async function submitSummary() {
   renderStudy();
 }
 function renderResult() {
-  const u = study.unit, res = study.result, o = study.outcome;
-  const chips = res.hits.map(h => `<span class="chip hit">✔ ${esc(h)}</span>`).join('') + '<span class="chip miss">?</span>'.repeat(Math.max(0, res.total - res.hits.length));
-  $('#study-body').innerHTML = `<div class="card">${steps('result')}
-    <div class="result-hero"><div class="big-emoji">${res.pass ? '🎉' : '👾'}</div><h2>${res.pass ? '통과!' : '다시 도전!'}</h2><div class="score">${res.score}점</div>
+  const u = study.unit, t = study.topic, res = study.result, o = study.outcome;
+  const rec = state.records.find(r => r.topicId === t.id && r.date === todayKey());
+  const opened = rec ? rec.opened : res.hits;
+  const chips = opened.map(h => `<span class="chip hit">${o.newlyOpened.includes(h) ? '✨ ' : '✔ '}${esc(h)}</span>`).join('') + '<span class="chip miss">?</span>'.repeat(Math.max(0, o.total - opened.length));
+  const bd = o.breakdown || {};
+  const bdText = [bd.concept ? `개념 ${o.newlyOpened.length}개 열림 +${bd.concept}` : '', bd.quiz ? `퀴즈 +${bd.quiz}` : '', bd.pass ? `통과 +${bd.pass}` : '', bd.first ? `첫 시도 +${bd.first}` : '', bd.monster ? `괴물 정화 +${bd.monster}` : ''].filter(Boolean).join(' · ');
+  $('#study-body').innerHTML = `<div class="card">${steps('result')}<div class="subject muted small">${esc(u.title)} · ${esc(t.code || '')}</div>
+    <div class="result-hero"><div class="big-emoji">${res.pass ? '🎉' : (o.newlyOpened.length ? '🔓' : '👾')}</div><h2>${res.pass ? '통과!' : (o.newlyOpened.length ? '개념이 열렸어요!' : '다시 도전!')}</h2><div class="score">${res.score}점</div>
       <div class="progress"><div style="width:${res.score}%"></div></div><p>${esc(res.feedback)}</p></div>
-    <div class="row-label">핵심 개념 (${res.hits.length}/${res.total}) <small class="muted">— 빠진 개념은 ? 로 표시돼요</small></div>
+    <div class="row-label">열린 개념 (${opened.length}/${o.total}) <small class="muted">— ✨ 이번에 새로 열림 · ? 아직 숨어 있음</small></div>
     <div class="chips hit-chips">${chips}</div>
+    ${o.coins ? `<div class="hintbox" style="background:#ecfdf5;border-color:#16a34a">🪙 <b>+${o.coins} 코인</b> <span class="small muted">(${esc(bdText)})</span>${res.pass && o.itemId ? ' 과 <b>가구 상자 📦</b>!' : ''}</div>` : (o.practice ? '<p class="muted">오늘 이 성취기준 보상은 이미 다 받았어요. 연습 기록으로 저장했어요 ✍️</p>' : '')}
     ${res.hint ? `<div class="hintbox">💡 <b>${res.pass ? '한 걸음 더' : '발판 힌트'}</b> — ${esc(res.hint)}</div>` : ''}
-    ${res.pass ? (o.practice ? '<p class="muted">오늘 이 단원 보상은 이미 받았어요. 연습 기록으로 저장했어요 ✍️</p>'
-      : `<div class="hintbox" style="background:#ecfdf5;border-color:#16a34a">🪙 <b>+${o.coins} 코인</b> ${o.purified ? '(먼지 괴물 정화 보너스 포함!) ' : ''}과 <b>가구 상자 📦</b>를 받았어요!</div>`)
-      : '<p class="muted">정답은 알려주지 않아요. 힌트를 보고 요약을 고쳐서 다시 제출해 보세요. 이 단원 방에 오개념 먼지 괴물이 나타났어요 — 재도전으로 정화하면 보너스!</p>'}
+    ${!res.pass ? `<p class="muted">정답은 알려주지 않아요. 힌트를 보고 요약을 고쳐 다시 제출하면 <b>새로 열리는 개념마다 코인</b>을 더 받고, 통과하면 가구 상자를 받아요.${o.monster ? ' 이 단원 방에 오개념 먼지 괴물이 나타났어요 — 통과하면 정화 보너스!' : ''}</p>` : ''}
     <div class="btn-row">
       ${res.pass && o.itemId ? '<button class="btn primary big" id="btn-open-box">📦 가구 상자 열기</button>' : ''}
       ${!res.pass ? '<button class="btn primary big" id="btn-retry">✏️ 요약 고쳐서 재도전</button>' : ''}
-      <button class="btn" id="btn-units">다른 단원 하기</button><button class="btn ghost" id="btn-room">🛋️ 내 방으로</button></div></div>`;
+      <button class="btn" id="btn-topics">다른 성취기준 하기</button><button class="btn ghost" id="btn-room">🛋️ 내 방으로</button></div></div>`;
   const ob = $('#btn-open-box'); if (ob) ob.onclick = () => openBox(o);
   const rt = $('#btn-retry'); if (rt) rt.onclick = () => { study.step = 'summary'; renderStudy(); };
-  $('#btn-units').onclick = () => { study = { step: 'units' }; renderStudy(); };
+  $('#btn-topics').onclick = () => { study = { step: 'topics', unit: u }; renderStudy(); };
   $('#btn-room').onclick = () => showScreen('room');
 }
 let streamTimer;
@@ -518,9 +542,9 @@ function renderLibrary() {
       ${can ? `<div class="btn-row"><button class="btn primary" id="btn-concept">🧠 내 개념도 액자 만들기 (${esc(unitTitle(currentRoomId || roomIds()[0]))} 방에 넣기)</button></div>` : ''}
     </div>
     <div class="card">${recs.length ? recs.map(r => {
-      const u = unitOf(r.unitId); const key = r.date + '|' + r.unitId;
-      return `<div class="rec"><div class="meta"><b>${shortDate(r.date)}</b><span>${esc(u ? u.subject + ' · ' + u.title : unitTitle(r.unitId))}</span>
-        <span class="tag ${r.pass ? 'pass' : 'fail'}">${r.pass ? '통과 · 학습자료' : '재도전'}</span><span>${r.score}점</span><span>퀴즈 ${r.quiz ? r.quiz.correct + '/' + r.quiz.total : '-'}</span>
+      const u = unitOf(r.unitId); const key = r.date + '|' + (r.topicId || r.unitId);
+      return `<div class="rec"><div class="meta"><b>${shortDate(r.date)}</b><span>${esc(u ? u.subject + ' · ' + u.title : unitTitle(r.unitId))}${topicCode(r.topicId) ? ' · ' + esc(topicCode(r.topicId)) : ''}</span>
+        <span class="tag ${r.pass ? 'pass' : 'fail'}">${r.pass ? '통과 · 학습자료' : '재도전'}</span><span>${r.score}점</span><span>개념 ${(r.opened || []).length}개</span><span>퀴즈 ${r.quiz ? r.quiz.correct + '/' + r.quiz.total : '-'}</span>
         ${r.pass && r.score >= 80 ? '<span class="tag best">⭐ 우수 요약</span>' : ''}${stickerCount[key] ? `<span class="tag best">✨ 영감 스티커 ${stickerCount[key]}</span>` : ''}</div><div class="text">${esc(r.summary)}</div></div>`;
     }).join('') : '<p class="muted">아직 요약이 없어요. 학습하기에서 첫 요약을 써 보세요!</p>'}</div>`;
   const b = $('#btn-concept'); if (b) b.onclick = () => makeConceptFrame(st.passed);
@@ -588,7 +612,7 @@ function renderVisit() {
     <div class="room-tabs">${ids.map(id => `<button class="room-tab ${id === friends.roomId ? 'on' : ''}" data-id="${esc(id)}">${esc(unitTitle(id))}</button>`).join('')}</div>
     ${ids.length ? '<canvas id="visit-canvas" width="820" height="450"></canvas>' : '<p class="muted">아직 꾸민 방이 없어요.</p>'}</div>
     <div class="card"><h3>📚 ${esc(v.name)}의 학습자료 <small class="muted">통과한 요약만 보여요</small></h3>
-    ${v.summaries.length ? v.summaries.slice().reverse().map(s => `<div class="summary-card"><div class="meta"><span>${shortDate(s.date)} · ${esc(unitTitle(s.unitId))}</span>
+    ${v.summaries.length ? v.summaries.slice().reverse().map(s => `<div class="summary-card"><div class="meta"><span>${shortDate(s.date)} · ${esc(unitTitle(s.unitId))}${topicCode(s.topicId) ? ' · ' + esc(topicCode(s.topicId)) : ''}</span>
       ${friends.myStickers.includes(s.key) ? '<span class="tag best">✨ 스티커 남김</span>' : `<button class="btn tiny accent sticker" data-key="${esc(s.key)}">✨ 영감 스티커</button>`}</div><div>${esc(s.text)}</div></div>`).join('') : '<p class="muted">아직 학습자료가 없어요.</p>'}</div>`;
   $('#visit-back').onclick = () => { friends.mode = 'list'; friends.view = null; visitRoom = null; renderFriends(); };
   $$('#friends-body .room-tab').forEach(b => b.onclick = () => { friends.roomId = b.dataset.id; renderVisit(); });
@@ -649,7 +673,7 @@ function renderTeacher() {
     return;
   }
   const dates = Array.from(new Set(state.records.map(r => r.date))).sort();
-  const cell = d => state.records.filter(r => r.date === d).map(r => `<div><b>${esc(unitTitle(r.unitId))}</b> ${r.pass ? '✅' : '❌'} ${r.score}점 · 퀴즈 ${r.quiz ? r.quiz.correct + '/' + r.quiz.total : '-'} · ${r.attempts}회<br><span class="muted">${esc(r.summary)}</span></div>`).join('<hr>');
+  const cell = d => state.records.filter(r => r.date === d).map(r => `<div><b>${esc(unitTitle(r.unitId))} ${esc(topicCode(r.topicId))}</b> ${r.pass ? '✅' : '❌'} ${r.score}점 · 퀴즈 ${r.quiz ? r.quiz.correct + '/' + r.quiz.total : '-'} · ${r.attempts}회<br><span class="muted">${esc(r.summary)}</span></div>`).join('<hr>');
   const photos = []; Object.entries(state.rooms).forEach(([rid, r]) => r.inventory.forEach(i => { if (i.id === 'photo_frame' && i.img && !i.approved) photos.push({ rid, it: i }); }));
   const coupons = state.coupons.filter(c => c.status === 'pending');
   body.innerHTML = `
@@ -712,7 +736,7 @@ async function init() {
   setInterval(checkLocks, 30000);
 
   if (MODE === 'local') {
-    units = typeof UNITS !== 'undefined' ? UNITS : [];
+    setTopics(typeof UNITS !== 'undefined' ? UNITS : []);
     try { const s = JSON.parse(localStorage.getItem(STORAGE_KEY)); if (s && s.student) state = Engine.migrate(s, units); } catch (e) { state = null; }
     if (state) { saveLocal(); start(); } else renderLogin();
     return;
@@ -724,7 +748,7 @@ async function init() {
   try {
     const r = await API.call({ action: 'load' });
     if (!r.ok) { if (r.error === 'night_lock') { $('#overlay-login').classList.add('hidden'); return $('#overlay-lock').classList.remove('hidden'); } API.clearSession(); return renderLogin('login', r.message || '다시 로그인해 주세요'); }
-    units = r.units || []; state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
+    setTopics(r.units); state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
     $('#overlay-login').classList.add('hidden'); start();
   } catch (e) { renderLogin('login', '서버에 연결할 수 없어요. 인터넷을 확인한 뒤 다시 들어와 주세요.'); }
 }
