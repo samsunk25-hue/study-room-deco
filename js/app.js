@@ -563,16 +563,16 @@ function openBox(o) {
 function renderLibrary() {
   if (isTeacher()) return renderTeacherLibrary();
   const recs = state.records.slice().sort((a, b) => b.date.localeCompare(a.date) || b.score - a.score);
-  const mk = monthKey(); const st = Engine.monthStats(state, mk);
-  const can = st.days >= CONFIG.conceptMapThreshold && !state.conceptMaps[mk];
+  const progress = units.map(u => Object.assign({ unit: u }, Engine.unitProgress(state, topics, u.id)));
+  const ready = progress.filter(p => p.total && p.passed >= p.total && !state.conceptMaps[p.unit.id]);
+  const started = progress.filter(p => p.passed > 0);
   const stickerCount = {}; (inbox.stickers || []).forEach(s => stickerCount[s.key] = (stickerCount[s.key] || 0) + 1);
   $('#library-body').innerHTML = `
     <div class="card"><h2>📚 나의 서재</h2>
       <p class="muted small">내가 쓴 요약이 쌓이는 곳이에요. 통과한 요약만 <b>학습자료</b>로 친구에게 보여요. 점수·시도 횟수는 나와 선생님만 볼 수 있어요.</p>
-      <div class="row-label">🧠 AI 개념도 액자 (월 1회)</div>
-      <div class="progress"><div style="width:${Math.min(100, st.days / CONFIG.conceptMapThreshold * 100)}%"></div></div>
-      <div class="small muted">이번 달 통과한 날: ${st.days} / ${CONFIG.conceptMapThreshold}일 ${state.conceptMaps[mk] ? '— 이번 달 액자를 이미 받았어요 ✅' : ''}</div>
-      ${can ? `<div class="btn-row"><button class="btn primary" id="btn-concept">🧠 내 개념도 액자 만들기 (${esc(unitTitle(currentRoomId || roomIds()[0]))} 방에 넣기)</button></div>` : ''}
+      <div class="row-label">🧠 AI 개념도 액자 <small class="muted">— 한 단원의 성취기준을 모두 통과하면 그 단원의 개념도 액자를 받아요</small></div>
+      ${started.length ? started.map(p => `<div style="margin:6px 0"><div class="small"><b>${esc(p.unit.title)}</b> · 통과 ${p.passed}/${p.total} ${state.conceptMaps[p.unit.id] ? '<span class="tag pass">액자 받음 ✅</span>' : (p.passed >= p.total ? '<span class="tag best">완성!</span>' : '')}</div><div class="progress"><div style="width:${Math.round(p.passed / p.total * 100)}%"></div></div></div>`).join('') : '<p class="muted small">아직 통과한 성취기준이 없어요. 학습하기에서 시작해 보세요.</p>'}
+      ${ready.length ? `<div class="btn-row">${ready.map(p => `<button class="btn primary btn-concept" data-unit="${esc(p.unit.id)}">🧠 ${esc(p.unit.title)} 개념도 액자 만들기</button>`).join('')}</div>` : ''}
     </div>
     <div class="card">${recs.length ? recs.map(r => {
       const u = unitOf(r.unitId); const key = r.date + '|' + (r.topicId || r.unitId);
@@ -580,9 +580,10 @@ function renderLibrary() {
         <span class="tag ${r.pass ? 'pass' : 'fail'}">${r.pass ? '통과 · 학습자료' : '재도전'}</span><span>${r.score}점</span><span>개념 ${(r.opened || []).length}개</span><span>퀴즈 ${r.quiz ? r.quiz.correct + '/' + r.quiz.total : '-'}</span>
         ${r.pass && r.score >= 80 ? '<span class="tag best">⭐ 우수 요약</span>' : ''}${stickerCount[key] ? `<span class="tag best">✨ 영감 스티커 ${stickerCount[key]}</span>` : ''}</div><div class="text">${esc(r.summary)}</div></div>`;
     }).join('') : '<p class="muted">아직 요약이 없어요. 학습하기에서 첫 요약을 써 보세요!</p>'}</div>`;
-  const b = $('#btn-concept'); if (b) b.onclick = () => makeConceptFrame(st.passed);
+  $$('.btn-concept').forEach(b => b.onclick = () => makeConceptFrame(b.dataset.unit));
 }
-async function makeConceptFrame(recs) {
+async function makeConceptFrame(unitId) {
+  const recs = Engine.unitProgress(state, topics, unitId).records;
   const freq = {}, edges = {};
   recs.forEach(r => {
     const hs = (r.hits || []).slice(0, 6);
@@ -593,7 +594,7 @@ async function makeConceptFrame(recs) {
   const cv = document.createElement('canvas'); cv.width = 320; cv.height = 220; const c = cv.getContext('2d');
   c.fillStyle = '#fffdf7'; c.fillRect(0, 0, 320, 220);
   c.fillStyle = '#7a4b00'; c.font = 'bold 13px sans-serif'; c.textAlign = 'center';
-  c.fillText(`${state.student.name}의 개념도 · ${monthKey().replace('-', '년 ')}월`, 160, 20);
+  c.fillText(`${state.student.name}의 개념도 · ${unitTitle(unitId).replace(/^[ⅠⅡⅢⅣⅤⅥⅦⅧ]+\.\s*/, '')}`.slice(0, 28), 160, 20);
   const pos = {};
   nodes.forEach((n, i) => { const a = i / nodes.length * Math.PI * 2 - Math.PI / 2; pos[n] = { x: 160 + Math.cos(a) * 110, y: 125 + Math.sin(a) * 78 }; });
   c.strokeStyle = '#d4b483';
@@ -603,8 +604,8 @@ async function makeConceptFrame(recs) {
     c.fillStyle = ['#f59e0b', '#4f8fe0', '#5fc8b0', '#9b7fd4', '#f08cb4'][i % 5]; c.beginPath(); c.arc(p.x, p.y, r, 0, 7); c.fill();
     c.fillStyle = '#fff'; c.font = 'bold 11px sans-serif'; c.fillText(n.length > 5 ? n.slice(0, 5) : n, p.x, p.y + 4);
   });
-  const r = await dispatch({ type: 'conceptFrame', unitId: currentRoomId || roomIds()[0], img: cv.toDataURL('image/png') }, true);
-  if (r.ok) { if (MODE === 'local') saveLocal(); renderLibrary(); toast('🧠 AI 개념도 액자를 받았어요! 내 방 보관함에서 벽에 걸어 보세요.', 'ok'); }
+  const r = await dispatch({ type: 'conceptFrame', unitId, img: cv.toDataURL('image/png') }, true);
+  if (r.ok) { if (MODE === 'local') saveLocal(); renderLibrary(); toast(`🧠 ${unitTitle(unitId)} 개념도 액자를 받았어요! 그 단원 방의 보관함에서 벽에 걸어 보세요.`, 'ok'); }
 }
 
 /* ---------------- 친구 방 (서버 모드) ---------------- */
@@ -731,7 +732,7 @@ async function renderTeacherServer(body) {
     <div class="card" style="background:#eef6ff"><h3>👩‍🏫 교사로 접속 중</h3><p class="small">심야·수업 시간 잠금이 적용되지 않고 코인은 무제한이에요. 친구 방 탭에서 모든 학생의 방과 학습자료를 볼 수 있어요. 이 계정의 방은 시험용이라 평가기록부에 들어가지 않아요.</p></div>
     <div class="card" id="t-settings"><h3>⚙️ 설정</h3><p class="muted small">불러오는 중...</p></div>
     <div class="card" id="t-events"><h3>🎉 이벤트 관리</h3></div>
-    <div class="card"><h3>🧪 테스트 자료 넣기</h3><p class="muted small">학번을 넣고 누르면 그 학생에게 이번 달 통과 기록 4일치가 들어가요. 학생 서재의 <b>AI 개념도 액자 만들기</b> 조건을 바로 시험할 수 있어요. (실제 학생에게는 쓰지 마세요)</p><div class="btn-row"><input type="text" id="t-seed-id" inputmode="numeric" placeholder="학번 (예: 7777)" style="max-width:160px" autocomplete="off"><button class="btn" id="t-seed">통과 기록 4일치 넣기</button></div></div>
+    <div class="card"><h3>🧪 테스트 자료 넣기</h3><p class="muted small">학번을 넣고 누르면 그 학생에게 한 단원의 성취기준을 모두 통과한 기록이 들어가요. 학생 서재의 <b>개념도 액자 만들기</b>를 바로 시험할 수 있어요. (실제 학생에게는 쓰지 마세요)</p><div class="btn-row"><input type="text" id="t-seed-id" inputmode="numeric" placeholder="학번 (예: 7777)" style="max-width:160px" autocomplete="off"><button class="btn" id="t-seed">단원 통과 기록 넣기</button></div></div>
     <div class="card"><h3>📝 문항 · 🎟️ 쿠폰 · ✅ 승인은 어디서?</h3><p class="small">형성평가 문항은 <b>학습하기 탭</b>에서 성취기준을 열면 형성평가 아래에 편집기가 나와요. 쿠폰 편집과 쿠폰·사진 액자 승인은 <b>상점 탭</b> 위에 있어요.</p></div>
     <div class="card"><h3>📌 시트에서 하는 일</h3><ul class="small">
       <li><b>사진·쿠폰 승인</b>: 승인요청 시트의 승인 체크박스를 켜면 학생이 다음 접속 때 반영돼요. (즉시 반영은 메뉴 ④)</li>

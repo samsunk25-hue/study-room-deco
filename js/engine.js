@@ -103,6 +103,13 @@ const Engine = (() => {
     for (const k of pool) { r -= RARITY[ITEMS[k].rarity].weight; if (r <= 0) return k; }
     return pool[0];
   }
+  /** 단원별 진행: 통과한 성취기준 수 / 전체, 통과 기록들 */
+  function unitProgress(state, topics, unitId) {
+    const ts = (topics || []).filter(t => unitIdOf(t) === unitId);
+    const passedIds = new Set(state.records.filter(r => r.pass && r.unitId === unitId).map(r => r.topicId));
+    const passed = ts.filter(t => passedIds.has(t.id)).length;
+    return { total: ts.length, passed, records: state.records.filter(r => r.pass && r.unitId === unitId) };
+  }
   function monthStats(state, month) {
     const passed = state.records.filter(r => r.pass && r.date.startsWith(month));
     return { passed, days: new Set(passed.map(r => r.date)).size };
@@ -239,13 +246,14 @@ const Engine = (() => {
         return { ok: true };
       }
       case 'conceptFrame': {
-        const month = ctx.today.slice(0, 7);
-        if (state.conceptMaps[month]) return fail('이번 달 개념도 액자는 이미 받았어요');
-        const st = monthStats(state, month);
-        if (st.days < CONFIG.conceptMapThreshold) return fail(`이번 달 통과한 날이 ${CONFIG.conceptMapThreshold}일 이상이어야 해요`);
+        // 한 단원의 성취기준을 모두 통과하면 그 단원의 개념도 액자 1개
+        const prog = unitProgress(state, topicsOf(ctx), cmd.unitId);
+        if (!prog.total) return fail('단원을 찾을 수 없어요');
+        if (state.conceptMaps[cmd.unitId]) return fail('이 단원의 개념도 액자는 이미 받았어요');
+        if (prog.passed < prog.total) return fail(`이 단원의 성취기준 ${prog.total}개를 모두 통과해야 해요 (지금 ${prog.passed}개)`);
         if (typeof cmd.img !== 'string' || !cmd.img.startsWith('data:image/png;base64,') || cmd.img.length > CONFIG.photoMaxChars) return fail('개념도 이미지가 올바르지 않아요');
         const it = addItem(state, cmd.unitId, 'concept_frame', ctx.today, { img: cmd.img, approved: true });
-        state.conceptMaps[month] = true;
+        state.conceptMaps[cmd.unitId] = true;
         return { ok: true, result: { uid: it.uid } };
       }
       case 'settings': {
@@ -278,5 +286,5 @@ const Engine = (() => {
     return { name: state.student ? state.student.name : '', rooms, summaries };
   }
 
-  return { VERSION, N, newState, migrate, room, footprint, randomFreeTile, addItem, eventActive, activeEvents, defaultEvents, rollItem, monthStats, grade, submit, apply, publicView, groupUnits, unitIdOf };
+  return { VERSION, N, newState, migrate, room, footprint, randomFreeTile, addItem, eventActive, activeEvents, defaultEvents, rollItem, monthStats, unitProgress, grade, submit, apply, publicView, groupUnits, unitIdOf };
 })();

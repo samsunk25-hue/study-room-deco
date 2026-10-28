@@ -108,23 +108,26 @@ function seedTest_(acc, body, today) {
   if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
   const id = String(body.studentId || '').trim();
   const sacc = account_(id); if (!sacc) return fail_('no_student', '학번 ' + id + ' 학생을 찾을 수 없어요');
-  const units = loadUnits_(); if (units.length < 4) return fail_('no_units', '단원이 4개 이상 있어야 해요');
+  const units = loadUnits_(); if (!units.length) return fail_('no_units', '단원이 없어요');
   const st = loadState_(sacc, false);
+  // 한 단원(성취기준 수가 가장 적은 단원)의 성취기준을 모두 통과한 기록을 넣어 개념도 액자 조건을 바로 만족시킴
+  const byUnit = {}; units.forEach(u => (byUnit[u.unitId] = byUnit[u.unitId] || []).push(u));
+  const unitId = Object.keys(byUnit).filter(k => !st.conceptMaps[k]).sort((a, b) => byUnit[a].length - byUnit[b].length)[0] || Object.keys(byUnit)[0];
+  const picked = byUnit[unitId];
   const day = Number(today.slice(8, 10)), month = today.slice(0, 7);
-  const days = []; for (let d = day; d >= 1 && days.length < 4; d--) days.push(month + '-' + (d < 10 ? '0' : '') + d);
-  if (days.length < 4) return fail_('early_month', '이번 달 날짜가 4일보다 적어요. 5일 이후에 해 주세요');
-  const picked = [units[0], units[Math.floor(units.length / 3)], units[Math.floor(units.length * 2 / 3)], units[units.length - 1]];
+  const days = []; for (let d = day; d >= 1 && days.length < picked.length; d--) days.push(month + '-' + (d < 10 ? '0' : '') + d);
+  while (days.length < picked.length) days.push(today);
   let added = 0;
   picked.forEach((u, i) => {
     const date = days[i];
-    if (st.records.some(r => r.date === date && r.topicId === u.id)) return;
+    if (st.records.some(r => r.pass && r.topicId === u.id)) return;
     const hits = u.keyConcepts.slice(0, 4).map(c => c.term);
     st.records.push({ date, topicId: u.id, unitId: u.unitId, attempts: 1, quizRewarded: true, passRewarded: true, opened: hits, quiz: { correct: 2, total: 2 },
       summary: '[테스트 자료] ' + hits.join(', ') + ' 개념을 연결해 설명한 요약이에요.', score: 85, pass: true, hits, reason: 'ok', reward: { coins: 90, itemId: null } });
     added++;
   });
   saveState_(sacc, st); cache_().remove('allsum');
-  return { ok: true, added, days, message: `${sacc.name}(${id})에게 이번 달 통과 기록 ${added}건을 넣었어요. 학생이 서재에서 "개념도 액자 만들기"를 누를 수 있어요.` };
+  return { ok: true, added, unitId, message: `${sacc.name}(${id})에게 "${picked[0].title}" 단원 성취기준 ${picked.length}개 통과 기록을 넣었어요(새로 ${added}건). 학생이 서재에서 그 단원 개념도 액자를 만들 수 있어요.` };
 }
 
 /* ======================= 교사 승인 (앱 교사 모드) ======================= */
