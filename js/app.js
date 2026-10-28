@@ -43,7 +43,7 @@ function whereNow() { if (!state) return ''; const st = $('#screen-study'); if (
 function topicOf(id) { return topics.find(t => t.id === id); }
 function topicCode(id) { const t = topicOf(id); return t && t.code ? t.code : ''; }
 function setTopics(list) { topics = list || []; units = Engine.groupUnits(topics); }
-function unitTitle(id) { const u = unitOf(id); return u ? u.title : (id === 'home' ? '처음 방' : '이전 단원'); }
+function unitTitle(id) { const u = unitOf(id); return u ? u.title : (id === 'home' ? '내 방' : '이전 단원'); }
 let toastTimer;
 function toast(msg, type = '') {
   const el = $('#toast'); el.textContent = msg; el.className = 'show ' + type;
@@ -243,20 +243,19 @@ function logout() {
 }
 
 /* ---------------- 내 방 (단원별) ---------------- */
-function roomIds() {
-  const ids = units.map(u => u.id);
-  Object.keys(state.rooms).forEach(k => { if (!ids.includes(k)) ids.push(k); });
-  return ids;
-}
+function roomIds() { return [Engine.HOME]; }   // 방은 하나
+let tUnit = null;                                 // 교사: 활동 현황에서 고른 단원
 function currentRoom() { return Engine.room(state, currentRoomId); }
 function renderRoom() {
-  if (!currentRoomId || !roomIds().includes(currentRoomId)) currentRoomId = roomIds()[0];
-  $('#room-tabs').innerHTML = roomIds().map(id => {
-    const r = state.rooms[id]; const n = r ? r.inventory.length : 0; const u = unitOf(id);
-    const here = isTeacher() ? onlineList.filter(st => st.where === id).length : 0;
-    return `<button class="room-tab ${id === currentRoomId ? 'on' : ''}" data-id="${esc(id)}">${esc(u ? u.subject + ' · ' : '')}${esc(unitTitle(id))} ${isTeacher() ? `<b>👥 ${here}</b> <small>· 시작 ${unitStats.stats[id] || 0}명</small>` : `<small>${n}개</small>`}${r && r.monster ? ' 👾' : ''}</button>`;
-  }).join('');
-  $$('.room-tab').forEach(b => b.onclick = () => { currentRoomId = b.dataset.id; myRoom.clearSelection(); myRoom.setView('iso'); renderRoomHint(); renderRoom(); });
+  currentRoomId = Engine.HOME;
+  const tabs = $('#room-tabs');
+  if (isTeacher()) {   // 교사: 단원별 활동 현황 칩 (방 전환이 아니라 아래 접속 카드의 단원 선택)
+    if (!tUnit || !unitOf(tUnit)) { const busy = units.find(u => onlineList.some(st => st.where === u.id)); tUnit = busy ? busy.id : (units[0] ? units[0].id : null); }
+    tabs.classList.remove('hidden');
+    tabs.innerHTML = units.map(u => { const here = onlineList.filter(st => st.where === u.id).length;
+      return `<button class="room-tab ${u.id === tUnit ? 'on' : ''}" data-id="${esc(u.id)}">${esc(u.subject + ' · ' + u.title)} <b>👥 ${here}</b> <small>· 시작 ${unitStats.stats[u.id] || 0}명</small></button>`; }).join('');
+    $$('.room-tab').forEach(b => b.onclick = () => { tUnit = b.dataset.id; renderRoom(); });
+  } else { tabs.classList.add('hidden'); tabs.innerHTML = ''; }
   
   renderRoomPanel();
 }
@@ -280,8 +279,8 @@ function renderRoomPanel() {
   const inv = room.inventory.filter(i => !i.placed);
   $('#inv-count').textContent = `${inv.length}개`;
   $('#inventory-list').innerHTML = inv.length
-    ? inv.map(i => `<div class="inv-item" data-uid="${i.uid}" title="방에 놓기"><span class="emoji">${ITEMS[i.id].emoji}</span>${esc(ITEMS[i.id].name)}<span class="rar" style="color:${RARITY[ITEMS[i.id].rarity].color}">${RARITY[ITEMS[i.id].rarity].name}</span></div>`).join('')
-    : '<div class="inv-empty">이 방의 가구가 없어요. 이 단원 요약을 통과하면 가구 상자를 받아요!</div>';
+    ? inv.map(i => `<div class="inv-item" data-uid="${i.uid}" title="방에 놓기"><span class="emoji">${ITEMS[i.id].emoji}</span>${esc(ITEMS[i.id].name)}${i.unitId && unitOf(i.unitId) ? `<small class="muted"> · ${esc(unitTitle(i.unitId))}</small>` : ''}<span class="rar" style="color:${RARITY[ITEMS[i.id].rarity].color}">${RARITY[ITEMS[i.id].rarity].name}</span></div>`).join('')
+    : '<div class="inv-empty">보관함이 비어 있어요. 요약을 통과하면 가구 상자를 받고, 상점에서 살 수도 있어요!</div>';
   $$('#inventory-list .inv-item').forEach(el => el.onclick = () => {
     if (isClassLocked()) return toast('수업 시간에는 인테리어가 잠겨 있어요', 'bad');
     const it = room.inventory.find(i => i.uid === +el.dataset.uid);
@@ -511,7 +510,7 @@ async function submitSummary() {
   if (!r.ok) { renderStudy(); return; }
   if (MODE === 'local') saveLocal();
   const { res, outcome } = r.result;
-  currentRoomId = study.unit.id;
+  currentRoomId = Engine.HOME;
   if (outcome.purified && outcome.monsterAt) myRoom.purifyEffect(outcome.monsterAt.x, outcome.monsterAt.y, `+${CONFIG.rewards.monsterBonus} 코인`);
   study.result = res; study.outcome = outcome; study.step = 'result';
   renderStudy();
@@ -564,7 +563,7 @@ function openBox(o) {
       <p class="muted small">${esc(unitTitle(study.unit.id))} 방에 들어갔어요</p>
       <div class="btn-row" style="justify-content:center"><button class="btn primary" id="box-place">🛋️ 방에 놓기</button><button class="btn" id="box-keep">📦 보관함에 넣기</button></div></div>`;
     $('#box-place').onclick = () => {
-      ov.classList.add('hidden'); currentRoomId = study.unit.id;
+      ov.classList.add('hidden'); currentRoomId = Engine.HOME;
       const it = currentRoom().inventory.find(i => i.uid === o.itemUid);
       if (isClassLocked() || !it) { showScreen('room'); return toast('보관함에 넣었어요'); }
       if (myRoom.place(it)) { showScreen('room'); afterRoomChange(); toast('방에 놓았어요! 끌어서 옮겨 보세요.', 'ok'); }
@@ -586,7 +585,7 @@ function renderLibrary() {
   $('#library-body').innerHTML = `
     <div class="card"><h2>📚 나의 서재</h2>
       <p class="muted small">내가 쓴 요약이 쌓이는 곳이에요. 통과한 요약만 <b>학습자료</b>로 친구에게 보여요. 점수·시도 횟수는 나와 선생님만 볼 수 있어요.</p>
-      <div class="row-label">🧠 AI 개념도 액자 <small class="muted">— 한 단원의 성취기준을 모두 통과하면 그 단원의 개념도 액자를 받아요</small></div>
+      <div class="row-label">🧠 AI 개념도 액자 <small class="muted">— 한 단원의 성취기준을 모두 통과하면 그 단원의 개념도 액자와 🏆 단원 완성 트로피를 받아요</small></div>
       ${started.length ? started.map(p => `<div style="margin:6px 0"><div class="small"><b>${esc(p.unit.title)}</b> · 통과 ${p.passed}/${p.total} ${state.conceptMaps[p.unit.id] ? '<span class="tag pass">액자 받음 ✅</span> <button class="link btn-view-concept" data-unit="' + esc(p.unit.id) + '">🔍 개념도 보기</button>' : (p.passed >= p.total ? '<span class="tag best">완성!</span>' : '')}</div><div class="progress"><div style="width:${Math.round(p.passed / p.total * 100)}%"></div></div></div>`).join('') : '<p class="muted small">아직 통과한 성취기준이 없어요. 학습하기에서 시작해 보세요.</p>'}
       ${ready.length ? `<div class="btn-row">${ready.map(p => `<button class="btn primary btn-concept" data-unit="${esc(p.unit.id)}">🧠 ${esc(p.unit.title)} 개념도 액자 만들기</button>`).join('')}</div>` : ''}
     </div>
@@ -622,7 +621,7 @@ async function makeConceptFrame(unitId) {
     c.fillStyle = '#fff'; c.font = 'bold 11px sans-serif'; c.fillText(n.length > 5 ? n.slice(0, 5) : n, p.x, p.y + 4);
   });
   const r = await dispatch({ type: 'conceptFrame', unitId, img: cv.toDataURL('image/png') }, true);
-  if (r.ok) { if (MODE === 'local') saveLocal(); renderLibrary(); toast(`🧠 ${unitTitle(unitId)} 개념도 액자를 받았어요! 그 단원 방의 보관함에서 벽에 걸어 보세요.`, 'ok'); }
+  if (r.ok) { if (MODE === 'local') saveLocal(); renderLibrary(); toast(`🧠 ${unitTitle(unitId)} 개념도 액자와 🏆 단원 완성 트로피를 받았어요! 내 방 보관함에서 꺼내 놓아 보세요.`, 'ok'); }
 }
 
 /* ---------------- 친구 방 (서버 모드) ---------------- */
@@ -669,7 +668,7 @@ function renderVisit() {
   if (!friends.roomId || !ids.includes(friends.roomId)) friends.roomId = ids[0];
   $('#friends-body').innerHTML = `<div class="card"><div class="btn-row" style="margin:0 0 8px"><button class="btn ghost tiny" id="visit-back">← 친구 목록</button></div>
     <h2>🏠 ${esc(v.name)}의 방</h2>
-    <div class="room-tabs">${ids.map(id => `<button class="room-tab ${id === friends.roomId ? 'on' : ''}" data-id="${esc(id)}">${esc(unitTitle(id))}</button>`).join('')}</div>
+    ${ids.length > 1 ? `<div class="room-tabs">${ids.map(id => `<button class="room-tab ${id === friends.roomId ? 'on' : ''}" data-id="${esc(id)}">${esc(unitTitle(id))}</button>`).join('')}</div>` : ''}
     ${ids.length ? '<canvas id="visit-canvas" width="820" height="640"></canvas><div class="room-hint" id="visit-hint"></div>' : '<p class="muted">아직 꾸민 방이 없어요.</p>'}</div>
     <div class="card"><h3>📚 ${esc(v.name)}의 학습자료 <small class="muted">통과한 요약만 보여요</small></h3>
     ${v.summaries.length ? v.summaries.slice().reverse().map(s => `<div class="summary-card"><div class="meta"><span>${shortDate(s.date)} · ${esc(unitTitle(s.unitId))}${topicCode(s.topicId) ? ' · ' + esc(topicCode(s.topicId)) : ''}</span>
@@ -690,15 +689,14 @@ function renderVisit() {
 
 /* ---------------- 상점 ---------------- */
 function renderShop() {
-  const room = currentRoom(); const hasFrame = room.inventory.some(i => i.id === 'photo_frame');
+  const room = currentRoom(); const hasFrame = room.inventory.some(i => i.id === 'photo_frame' && !i.img);
   $('#shop-body').innerHTML = `
-    <div class="card"><h2>🛒 상점</h2><p class="muted small">코인은 요약을 통과하면 받아요. 색상·스타일 리폼은 내 방에서 가구를 선택해 할 수 있어요. 산 액자와 가구는 아래에서 고른 방의 보관함에 들어가요.</p>
-    <div class="row-label" style="margin-top:8px">🏠 넣을 방 고르기</div><div class="chips" id="shop-rooms">${roomIds().map(id => `<button class="chip ${id === currentRoomId ? 'on' : ''}" data-id="${esc(id)}">${esc(unitTitle(id))}</button>`).join('')}</div></div>
+    <div class="card"><h2>🛒 상점</h2><p class="muted small">코인은 요약을 통과하면 받아요. 색상·스타일 리폼은 내 방에서 가구를 선택해 할 수 있어요. 산 액자와 가구는 내 방 보관함에 들어가요.</p></div>
     ${isTeacher() ? '<div class="card" id="t-photo-approvals" style="background:#eef6ff"><h3>✅ 사진 액자 승인 대기</h3><p class="muted small">불러오는 중...</p></div><div class="card" id="t-coupon-approvals" style="background:#eef6ff"><h3>✅ 쿠폰 승인 대기</h3><p class="muted small">불러오는 중...</p></div><div class="card" id="t-coupons" style="background:#eef6ff"></div><div class="card" id="t-items" style="background:#eef6ff"></div><div class="card" id="t-prices" style="background:#eef6ff"></div>' : ''}
     <h3>🖼️ 특별 아이템</h3>
     <div class="shop-grid"><div class="card shop-item"><div class="emoji">📷</div><b>커스텀 사진 액자</b><p class="small muted">빈 액자를 사서 사진을 올려요. 개인정보·초상권·저작권 확인 후 올릴 수 있고, 선생님이 승인하면 컬러로 전시돼요. (월 1회)</p>
-      <div class="price">🪙 ${ITEMS.photo_frame.cost}</div><button class="btn primary" id="buy-frame" ${hasFrame ? 'disabled' : ''}>${hasFrame ? '이 방에 보유 중' : '구매'}</button></div></div>
-    <h3 style="margin-top:14px">🪑 가구 상점 <small class="muted">— 산 가구는 <b>${esc(unitTitle(currentRoomId))}</b> 방 보관함에 들어가요</small></h3>
+      <div class="price">🪙 ${ITEMS.photo_frame.cost}</div><button class="btn primary" id="buy-frame" ${hasFrame ? 'disabled' : ''}>${hasFrame ? '빈 액자 보유 중' : '구매'}</button></div></div>
+    <h3 style="margin-top:14px">🪑 가구 상점 <small class="muted">— 산 가구는 내 방 보관함에 들어가요</small></h3>
     <div class="shop-grid">${Object.keys(ITEMS).filter(k => (ITEMS[k].pool === 'box' || ITEMS[k].pool === 'shop') && k !== 'photo_frame').map(k => { const d = ITEMS[k], r = RARITY[d.rarity], p = d.cost > 0 ? d.cost : ((CONFIG.shopPrice || {})[d.rarity] || 100); return `<div class="card shop-item"><div class="emoji">${d.emoji}</div><b>${esc(d.name)}</b> <span class="rar small" style="color:${r.color}">${r.name}</span><div class="price">🪙 ${p}</div>${isTeacher() && !d.custom ? `<label class="small" style="margin:4px 0">가격 <input type="number" min="0" class="item-price" data-id="${k}" value="${itemPrices[k] || ''}" placeholder="${(CONFIG.shopPrice || {})[d.rarity] || 100}" style="width:90px;padding:4px 6px"></label>` : ''}<button class="btn primary buy-item" data-id="${k}">구매</button></div>`; }).join('')}</div>${isTeacher() ? '<div class="btn-row"><button class="btn primary" id="save-item-prices">가구별 가격 저장</button><span class="muted small">비우면 희귀도 기본가로 돌아가요. 교사가 추가한 가구는 가구 추가 칸에서 가격을 정해요.</span></div>' : ''}
     <h3 style="margin-top:14px">🎟️ O2O 비밀 상점 <small class="muted">— 현실 교실 쿠폰 (선생님 승인 후 사용)</small></h3>
     <div class="shop-grid">${coupons.map(cp => `<div class="card shop-item"><div class="emoji">🎟️</div><b>${esc(cp.name)}</b><p class="small muted">${esc(cp.desc)}</p><div class="price">🪙 ${cp.cost}</div><button class="btn primary buy-coupon" data-id="${cp.id}">구매</button></div>`).join('')}</div>
@@ -707,9 +705,8 @@ function renderShop() {
     tAdmin.coupons = coupons.map(c => Object.assign({}, c)); renderTCoupons(); tAdmin.items = customItems.map(x => Object.assign({}, x)); renderTItems(); loadTApprovals(); renderTPrices();
     const sip = $('#save-item-prices'); if (sip) sip.onclick = async () => { const prices = {}; $$('.item-price').forEach(i => { if (i.value !== '') prices[i.dataset.id] = Number(i.value); }); const r = await API.call({ action: 'saveItemPrices', prices }).catch(() => ({ ok: false, message: '연결 실패' })); if (r.ok) { applyItemPrices(r.itemPrices); toast('가구별 가격을 저장했어요', 'ok'); renderShop(); } else toast(r.message || '실패했어요', 'bad'); };
   }
-  $$('#shop-rooms .chip').forEach(b => b.onclick = () => { currentRoomId = b.dataset.id; renderShop(); });
   const bf = $('#buy-frame'); if (bf) bf.onclick = async () => { const r = await dispatch({ type: 'buyFrame', unitId: currentRoomId }, true); if (r.ok) { renderShop(); toast('빈 액자를 샀어요! 내 방 보관함에서 벽에 걸고 사진을 올려 보세요.', 'ok'); } };
-  $$('.buy-item').forEach(b => b.onclick = async () => { const r = await dispatch({ type: 'buyItem', unitId: currentRoomId, itemId: b.dataset.id }, true); if (r.ok) { toast(`${ITEMS[b.dataset.id].name}을(를) 샀어요! ${unitTitle(currentRoomId)} 방 보관함에서 놓을 수 있어요.`, 'ok'); renderShop(); } });
+  $$('.buy-item').forEach(b => b.onclick = async () => { const r = await dispatch({ type: 'buyItem', unitId: currentRoomId, itemId: b.dataset.id }, true); if (r.ok) { toast(`${ITEMS[b.dataset.id].name}을(를) 샀어요! 내 방 보관함에서 놓을 수 있어요.`, 'ok'); renderShop(); } });
   $$('.buy-coupon').forEach(b => b.onclick = async () => { const r = await dispatch({ type: 'buyCoupon', id: b.dataset.id }, true); if (r.ok) { renderShop(); toast('쿠폰을 신청했어요. 선생님 승인을 기다려요!', 'ok'); } });
 }
 
@@ -1025,12 +1022,12 @@ function renderOnlineCard() {
   if (!isTeacher()) return;
   let card = $('#online-card');
   if (!card) { card = document.createElement('div'); card.id = 'online-card'; card.className = 'card'; card.style.background = '#ecfdf5'; $('#room-panel').insertBefore(card, $('#room-panel').firstChild); }
-  const here = onlineList.filter(st => st.where === currentRoomId), other = onlineList.filter(st => st.where !== currentRoomId);
+  const here = onlineList.filter(st => st.where === tUnit), other = onlineList.filter(st => st.where !== tUnit);
   const chip = st => `<span class="chip online-chip" data-id="${esc(st.id)}" style="font-size:1rem;cursor:pointer" title="방 방문">${emojiFor(st.id)} ${esc(st.name)} <small class="muted">${esc(st.id)}</small></span>`;
-  card.innerHTML = `<h3>🟢 ${esc(unitTitle(currentRoomId))}에서 활동 중 <small class="muted">${here.length}명 · 최근 5분</small></h3>` +
+  card.innerHTML = `<h3>🟢 ${esc(tUnit ? unitTitle(tUnit) : '단원')}에서 활동 중 <small class="muted">${here.length}명 · 최근 5분</small></h3>` +
     (here.length ? `<div class="chips">${here.map(chip).join('')}</div>` : '<p class="muted small">이 단원에서 활동 중인 학생이 없어요.</p>') +
     `<div class="row-label" style="margin-top:10px">다른 단원·방 <small class="muted">${other.length}명</small></div>` +
-    (other.length ? `<div class="chips">${other.map(st => `<span class="chip online-chip" data-id="${esc(st.id)}" style="cursor:pointer">${emojiFor(st.id)} ${esc(st.name)} <small class="muted">${esc(unitTitle(st.where) || '?')}</small></span>`).join('')}</div>` : '<p class="muted small">없음</p>') +
+    (other.length ? `<div class="chips">${other.map(st => `<span class="chip online-chip" data-id="${esc(st.id)}" style="cursor:pointer">${emojiFor(st.id)} ${esc(st.name)} <small class="muted">${esc(st.where === 'home' ? '방 꾸미기' : (unitOf(st.where) ? unitTitle(st.where) : '접속 중'))}</small></span>`).join('')}</div>` : '<p class="muted small">없음</p>') +
     `<p class="muted small" style="margin-top:8px">전체 접속 ${onlineList.length}명 · 1분마다 새로 확인해요. 이름을 누르면 그 학생 방에 들어가요.</p>`;
   $$('#online-card .online-chip').forEach(el => el.onclick = () => { showScreen('friends'); visitFriend(el.dataset.id); });
 }
@@ -1119,14 +1116,14 @@ function renderRoomHint() {
     $('#btn-other-wall').onclick = () => { myRoom.toggleWall(); renderRoomHint(); };
     $('#btn-iso').onclick = () => { myRoom.setView('iso'); renderRoomHint(); };
   } else if (isTeacher()) {
-    el.textContent = '탭의 👥는 지금 활동 중, 시작 n명은 그 단원 학습을 한 번이라도 한 학생 수예요. 이름을 누르면 학생 방으로 들어가요.';
+    el.textContent = '위 단원 칩의 👥는 지금 그 단원을 학습 중인 학생 수, 시작 n명은 한 번이라도 학습한 학생 수예요. 칩을 누르면 아래에 이름이 보이고, 이름을 누르면 학생 방으로 들어가요.';
   } else {
     el.innerHTML = '가구를 끌어서 옮기고, 선택한 뒤 <b>R</b> 키로 회전할 수 있어요. <b>벽을 클릭</b>하면 그 벽을 크게 볼 수 있어요.';
   }
 }
 /* ---------------- 시작 ---------------- */
 function start() {
-  currentRoomId = roomIds()[0];
+  currentRoomId = Engine.HOME;
   document.body.classList.toggle('teacher', isTeacher());
   updateHeader(); checkLocks();
   $('#logout-btn').classList.toggle('hidden', MODE !== 'server');

@@ -353,7 +353,7 @@ const SOCIAL_HEADER = ['시각', '유형', '보낸 학번', '보낸 이름', '�
 const TEACHER_HEADER = ['이메일', '이름', '승인', '등록일'];
 const NIGHT_LOCK = { start: 22, end: 7 };
 const TOKEN_DAYS = 30;
-const SERVER_VERSION = 3;   // 앱이 서버 버전을 확인해 재배포 필요 여부를 안내함 (teacherLogin 8자리 코드 = 3)
+const SERVER_VERSION = 4;   // 앱이 서버 버전을 확인해 재배포 필요 여부를 안내함 (teacherLogin 8자리 코드 = 3)
 
 /* ======================= 공용 ======================= */
 function ss_() { return SpreadsheetApp.getActiveSpreadsheet(); }
@@ -447,21 +447,36 @@ function register_(body, today) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) return fail_('busy', '지금 접속이 많아요. 잠시 후 다시 시도해 주세요');
   try {
-    if (findAccount_(id)) return fail_('exists', '이미 만들어진 학번이에요. 비밀번호를 잊었으면 선생님께 초기화를 요청하세요');
+    const old = findAccount_(id);
+    const sh = sheet_(SHEETS.accounts, ACC_HEADER);
+    let at = 0, archived = null;
+    if (old) {
+      const oldName = String(old.data[ACC.name] || '').trim();
+      const oldYear = schoolYear_(old.data[ACC.created]), nowYear = schoolYear_(today);
+      if (oldName === name) return fail_('exists', '이미 만들어진 학번이에요. 비밀번호를 잊었으면 선생님께 초기화를 요청하세요');
+      if (oldYear >= nowYear) return fail_('exists', '이 학번은 올해 "' + oldName.slice(0, 1) + '○○" 이름으로 이미 가입되어 있어요. 학번을 확인하거나 선생님께 말씀하세요');
+      // 학년이 바뀌어 같은 학번을 다른 학생이 쓰게 됨 → 지난 학년도 자료는 이름을 바꿔 보관하고 새 방으로 시작
+      try { const f = DriveApp.getFileById(old.data[ACC.fileId]); f.setName(id + '_' + oldName + '_' + oldYear + '학년도.json'); } catch (e) { /* 파일이 없으면 그냥 새로 시작 */ }
+      at = old.row; archived = { name: oldName, year: oldYear };
+    }
     const salt = Utilities.getUuid();
     const state = Engine.newState({ id, name }, today);
     const file = subfolder_(FOLDERS.data).createFile(id + '.json', JSON.stringify(state), MimeType.PLAIN_TEXT);
-    const sh = sheet_(SHEETS.accounts, ACC_HEADER);
-    const rows = accountRows_();
-    let at = rows.length + 2;
-    for (let i = 0; i < rows.length; i++) { if (idNum_(id) < idNum_(rows[i][ACC.id])) { at = i + 2; break; } }
-    sh.insertRowBefore(at);
+    if (!at) {
+      const rows = accountRows_();
+      at = rows.length + 2;
+      for (let i = 0; i < rows.length; i++) { if (idNum_(id) < idNum_(rows[i][ACC.id])) { at = i + 2; break; } }
+      sh.insertRowBefore(at);
+    }
     sh.getRange(at, 1, 1, ACC_HEADER.length).setValues([[id, name, hash_(salt, pw), salt, file.getId(), today, today, 'knock', false]]);
     sh.getRange(at, 1).setNumberFormat('@');
     uncache_(id);
+    if (archived) try { sheet_(SHEETS.accounts, ACC_HEADER).getRange(at, ACC_HEADER.length + 1).setValue('지난 학년도(' + archived.year + ') ' + archived.name + ' 자료는 학생데이터 폴더에 보관'); } catch (e) { /* 메모 실패는 무시 */ }
     return { ok: true, token: makeToken_(id), name, state, units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), items: loadItems_(), inbox: { knocks: [], stickers: [] } };
   } finally { lock.releaseLock(); }
 }
+/** 학년도: 3월~다음해 2월 */
+function schoolYear_(d) { const s = d instanceof Date ? Utilities.formatDate(d, 'Asia/Seoul', 'yyyy-MM-dd') : String(d || ''); const y = Number(s.slice(0, 4)), m = Number(s.slice(5, 7)); if (!y) return 0; return m >= 3 ? y : y - 1; }
 function login_(body, today) {
   const id = String(body.id || '').trim(), pw = String(body.password || '');
   const failKey = 'fail_' + id;
@@ -644,11 +659,11 @@ function flushPendingApprovals_(acc, state) {
       try {
         let link = '', fileId = '', desc = '';
         if (p.type === 'photo') {
-          const r = state.rooms[p.unitId]; const it = r && r.inventory.find(i => i.uid === p.uid);
+          let it = null; Object.keys(state.rooms).forEach(k => { const f = state.rooms[k].inventory.find(i => i.uid === p.uid); if (f) it = f; });
           if (!it || !it.img) continue;
           const blob = Utilities.newBlob(Utilities.base64Decode(it.img.split(',')[1]), 'image/jpeg', acc.id + '_' + p.uid + '.jpg');
           const f = subfolder_(FOLDERS.photos).createFile(blob);
-          link = f.getUrl(); fileId = f.getId(); desc = '사진 액자 (' + p.unitId + ' 방, uid ' + p.uid + ')';
+          link = f.getUrl(); fileId = f.getId(); desc = '사진 액자 (uid ' + p.uid + ')';
         } else desc = '쿠폰: ' + p.name;
         sh.appendRow([now, acc.id, acc.name, p.type, desc, link, fileId, false, false]);
         sh.getRange(sh.getLastRow(), 8, 1, 2).insertCheckboxes();

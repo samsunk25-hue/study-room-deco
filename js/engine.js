@@ -8,7 +8,8 @@
  * ===================================================================== */
 const Engine = (() => {
   const N = 8;
-  const VERSION = 2;
+  const VERSION = 3;
+  const HOME = 'home';         // 방은 하나 (단원별 흔적은 개념도 액자·단원 트로피로 남음)
   const DEFAULT_ROOM = () => ({ wall: '#f6ecdc', floor: '#d8b07c', inventory: [], monster: null });
   const R = () => Object.assign({ conceptCoin: 10, quizCoin: 10, passCoin: 30, firstTryBonus: 20, monsterBonus: 15 }, CONFIG.rewards || {});
 
@@ -30,7 +31,7 @@ const Engine = (() => {
   function newState(student, today) {
     return {
       version: VERSION, student, coins: 0, uidSeq: 1,
-      rooms: {},                 // unitId → { wall, floor, inventory[], monster }
+      rooms: {},                 // { home: { wall, floor, inventory[], monster } }  (v3부터 방 하나)
       records: [],               // { date, topicId, unitId, attempts, quizRewarded, passRewarded, opened[], quiz, summary, score, pass, hits, reason, reward }
       coupons: [], conceptMaps: {}, photoMonths: {},
       settings: { privacy: 'knock', bypassLock: false, eventForce: false },
@@ -50,6 +51,36 @@ const Engine = (() => {
       delete state.inventory; delete state.room; delete state.monster;
       state.version = 2;
     }
+    if (state.version < 3) {                                  // v3: 단원별 방 → 방 하나로 합치기 (가구는 모두 보관함에 보존)
+      const keys = Object.keys(state.rooms || {});
+      if (keys.length) {
+        const score = k => (state.rooms[k].inventory || []).filter(i => i.placed).length;
+        const base = keys.slice().sort((a, b) => score(b) - score(a))[0];
+        const home = Object.assign(DEFAULT_ROOM(), { wall: state.rooms[base].wall, floor: state.rooms[base].floor, inventory: [], monster: state.rooms[base].monster || null });
+        keys.forEach(k => {
+          const r = state.rooms[k];
+          (r.inventory || []).forEach(it => { if (k !== base) it.placed = false; if (!it.unitId && (it.id === 'concept_frame' || it.id === 'photo_frame')) it.unitId = k; home.inventory.push(it); });
+          if (!home.monster && r.monster) home.monster = r.monster;
+        });
+        state.rooms = { [HOME]: home };
+      }
+      state.version = 3;
+    }
+    if (state.version < 3) {                                  // v3: 단원별 방 → 방 하나로 합치기 (가구는 모두 보관함에 보존)
+      const keys = Object.keys(state.rooms || {});
+      if (keys.length) {
+        const score = k => (state.rooms[k].inventory || []).filter(i => i.placed).length;
+        const base = keys.slice().sort((a, b) => score(b) - score(a))[0];
+        const home = Object.assign(DEFAULT_ROOM(), { wall: state.rooms[base].wall, floor: state.rooms[base].floor, inventory: [], monster: state.rooms[base].monster || null });
+        keys.forEach(k => {
+          const r = state.rooms[k];
+          (r.inventory || []).forEach(it => { if (k !== base) it.placed = false; if (!it.unitId && (it.id === 'concept_frame' || it.id === 'photo_frame')) it.unitId = k; home.inventory.push(it); });
+          if (!home.monster && r.monster) home.monster = r.monster;
+        });
+        state.rooms = { [HOME]: home };
+      }
+      state.version = 3;
+    }
     const base = newState(state.student, state.createdAt);
     for (const k of Object.keys(base)) if (state[k] === undefined) state[k] = base[k];
     for (const k of Object.keys(base.settings)) if (state.settings[k] === undefined) state.settings[k] = base.settings[k];
@@ -65,7 +96,7 @@ const Engine = (() => {
   }
 
   /* ---------- 헬퍼 ---------- */
-  function room(state, unitId) { if (!state.rooms[unitId]) state.rooms[unitId] = DEFAULT_ROOM(); return state.rooms[unitId]; }
+  function room(state) { if (!state.rooms[HOME]) state.rooms[HOME] = DEFAULT_ROOM(); return state.rooms[HOME]; }   // unitId 인자는 무시 (방 하나)
   function footprint(it) { const def = ITEMS[it.id]; return (it.rot || 0) % 2 ? { w: def.d, d: def.w } : { w: def.w, d: def.d }; }
   function randomFreeTile(r, rng) {
     const occ = new Set();
@@ -79,7 +110,7 @@ const Engine = (() => {
   }
   function addItem(state, unitId, id, today, extra) {
     const it = Object.assign({ uid: state.uidSeq++, id, color: 'wood', style: 'basic', placed: false, rot: 0, x: 0, y: 0, side: 'R', pos: 0, obtainedAt: today }, extra || {});
-    room(state, unitId).inventory.push(it);
+    room(state).inventory.push(it);
     return it;
   }
   /** 이벤트 목록: 서버(이벤트 시트) 또는 기본 CONFIG.event 하나 */
@@ -221,7 +252,7 @@ const Engine = (() => {
       }
       case 'buyFrame': {
         const r = room(state, cmd.unitId);
-        if (r.inventory.some(i => i.id === 'photo_frame')) return fail('이 방에는 이미 사진 액자가 있어요');
+        if (r.inventory.some(i => i.id === 'photo_frame' && !i.img)) return fail('아직 사진을 올리지 않은 빈 액자가 있어요. 먼저 사진을 올려 주세요');
         if (!spend(ITEMS.photo_frame.cost)) return fail(`코인이 부족해요 (🪙 ${ITEMS.photo_frame.cost} 필요)`);
         const it = addItem(state, cmd.unitId, 'photo_frame', ctx.today);
         return { ok: true, result: { uid: it.uid } };
@@ -261,9 +292,10 @@ const Engine = (() => {
         if (state.conceptMaps[cmd.unitId]) return fail('이 단원의 개념도 액자는 이미 받았어요');
         if (prog.passed < prog.total) return fail(`이 단원의 성취기준 ${prog.total}개를 모두 통과해야 해요 (지금 ${prog.passed}개)`);
         if (typeof cmd.img !== 'string' || !cmd.img.startsWith('data:image/png;base64,') || cmd.img.length > CONFIG.photoMaxChars) return fail('개념도 이미지가 올바르지 않아요');
-        const it = addItem(state, cmd.unitId, 'concept_frame', ctx.today, { img: cmd.img, approved: true });
+        const it = addItem(state, cmd.unitId, 'concept_frame', ctx.today, { img: cmd.img, approved: true, unitId: cmd.unitId });
+        const tr = ITEMS.unit_trophy ? addItem(state, cmd.unitId, 'unit_trophy', ctx.today, { unitId: cmd.unitId }) : null;   // 단원 완성 한정 가구
         state.conceptMaps[cmd.unitId] = true;
-        return { ok: true, result: { uid: it.uid } };
+        return { ok: true, result: { uid: it.uid, trophyUid: tr ? tr.uid : null } };
       }
       case 'settings': {
         if (!['open', 'knock', 'private'].includes(cmd.privacy)) return fail('잘못된 공개 설정이에요');
@@ -286,6 +318,7 @@ const Engine = (() => {
   /* ---------- 방문자용 공개 뷰 (평가 정보·괴물·미승인 사진 제외) ---------- */
   function publicView(state) {
     const rooms = {};
+    if (!Object.keys(state.rooms).length) state.rooms[HOME] = DEFAULT_ROOM();   // 아직 가구가 없어도 빈 방은 보이게
     Object.keys(state.rooms).forEach(k => {
       const r = state.rooms[k];
       rooms[k] = { wall: r.wall, floor: r.floor, monster: null,
@@ -295,5 +328,5 @@ const Engine = (() => {
     return { name: state.student ? state.student.name : '', rooms, summaries };
   }
 
-  return { VERSION, N, newState, migrate, room, footprint, randomFreeTile, addItem, eventActive, activeEvents, defaultEvents, rollItem, monthStats, unitProgress, grade, submit, apply, publicView, groupUnits, unitIdOf };
+  return { VERSION, N, HOME, newState, migrate, room, footprint, randomFreeTile, addItem, eventActive, activeEvents, defaultEvents, rollItem, monthStats, unitProgress, grade, submit, apply, publicView, groupUnits, unitIdOf };
 })();

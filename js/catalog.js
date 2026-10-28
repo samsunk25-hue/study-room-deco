@@ -107,6 +107,8 @@ const ITEMS = {
   baekje_pot: { name: '백제 천연 염료 화분', emoji: '🌸', w: 1, d: 1, rarity: 'rare', pool: 'event' },
   photo_frame: { name: '커스텀 사진 액자', emoji: '📷', w: 1, d: 0, rarity: 'rare', pool: 'shop', wall: true, cost: 120 },
   concept_frame: { name: 'AI 개념도 액자', emoji: '🧠', w: 2, d: 0, rarity: 'epic', pool: 'special', wall: true },
+  unit_trophy: { name: '단원 완성 트로피', emoji: '🏆', w: 1, d: 1, rarity: 'epic', pool: 'special' },   // 한 단원 성취기준 모두 통과 시 (상점·상자에 없음)
+  unit_trophy: { name: '단원 완성 트로피', emoji: '🏆', w: 1, d: 1, rarity: 'epic', pool: 'special' },   // 한 단원 성취기준 모두 통과 시 (상점·상자에 없음)
 };
 
 /* ---------------- 히든 시너지 (인접 배치 시 특수 연출) ---------------- */
