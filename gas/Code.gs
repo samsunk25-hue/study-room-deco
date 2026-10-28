@@ -428,12 +428,49 @@ function teacherAccount_(email) {
   return { id: 'T:' + e, row: 0, name: name + ' 선생님', fileId, privacy: 'private', teacher: true };
 }
 /** 교사 접속 코드(시트 메뉴 ⑧에서 발급한 8자리 코드)로 앱 로그인 — 시간 제한 없음 */
+/* ---- 교사 이메일+비밀번호 (교사 시트 5·6열: 비밀번호해시, 솔트) ---- */
+function teacherRow_(email) {
+  const e = String(email || '').trim().toLowerCase(); if (!e) return null;
+  const sh = sheet_(SHEETS.teachers, TEACHER_HEADER); const n = sh.getLastRow();
+  if (sh.getLastColumn() < 6) sh.getRange(1, 5, 1, 2).setValues([['비밀번호해시', '솔트']]);
+  const rows = n > 1 ? sh.getRange(2, 1, n - 1, 6).getValues() : [];
+  for (let i = 0; i < rows.length; i++) if (String(rows[i][0]).trim().toLowerCase() === e) return { row: i + 2, data: rows[i], sheet: sh };
+  return null;
+}
+function teacherSetPassword_(acc, body) {
+  if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
+  const pw = String(body.password || ''); if (pw.length < 6 || pw.length > 40) return fail_('bad_pw', '비밀번호는 6자 이상이에요');
+  const email = acc.id.slice(2); let t = teacherRow_(email);
+  if (!t) {   // 관리자(시트 소유자)처럼 교사 시트에 없는 계정은 행을 만들어 준다
+    const sh = sheet_(SHEETS.teachers, TEACHER_HEADER); sh.appendRow([email, acc.name.replace(/ 선생님$/, ''), true, todayKey_()]); t = teacherRow_(email);
+  }
+  const salt = Utilities.getUuid();
+  t.sheet.getRange(t.row, 5, 1, 2).setValues([[hash_(salt, pw), salt]]);
+  return { ok: true };
+}
+function teacherEmailLogin_(body) {
+  const email = String(body.email || '').trim().toLowerCase(), pw = String(body.password || '');
+  if (!/^[^@\s]+@[^@\s]+$/.test(email) || !pw) return fail_('bad', '이메일과 비밀번호를 입력해 주세요');
+  const failKey = 'tfail_' + email;
+  if (Number(cache_().get(failKey) || 0) >= 10) return fail_('locked', '여러 번 틀려 10분 동안 잠겼어요');
+  const t = teacherRow_(email);
+  if (!t || t.data[2] !== true) return fail_('not_teacher', '승인된 교사 이메일이 아니에요. 관리자에게 등록을 요청하세요');
+  if (!t.data[4]) return fail_('no_pw', '아직 비밀번호가 없어요. 접속 코드로 들어간 뒤 교사 탭에서 비밀번호를 정하세요');
+  if (hash_(String(t.data[5]), pw) !== String(t.data[4])) { cache_().put(failKey, String(Number(cache_().get(failKey) || 0) + 1), 600); return fail_('bad_login', '이메일 또는 비밀번호가 맞지 않아요'); }
+  cache_().remove(failKey);
+  const acc = account_('T:' + email); if (!acc) return fail_('not_teacher', '승인된 교사가 아니에요');
+  return teacherSession_(acc);
+}
 function teacherLogin_(body) {
+  if (body.email !== undefined && !body.code) return teacherEmailLogin_(body);
   const code = String(body.code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   const raw = code && props_().getProperty('TCODE_' + code);
   let info = null; try { info = raw ? JSON.parse(raw) : null; } catch (e) { info = null; }
   if (!info || info.exp < Date.now()) return fail_('bad_code', code.length === 8 ? '교사 접속 코드가 맞지 않거나 만료됐어요. 시트 메뉴 ⑧에서 다시 발급해 보세요' : '교사 접속 코드는 8자리예요 (예: AB12-CD34). 시트 메뉴 ⑧에서 발급하세요');
   const acc = account_('T:' + info.email); if (!acc) return fail_('not_teacher', '승인된 교사가 아니에요. 관리자에게 등록을 요청하세요');
+  return teacherSession_(acc);
+}
+function teacherSession_(acc) {
   return { ok: true, token: makeToken_(acc.id), id: acc.id, name: acc.name, teacher: true, state: loadState_(acc, false), units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), items: loadItems_(), inbox: { knocks: [], stickers: [] } };
 }
 
@@ -897,6 +934,7 @@ function doPost(e) {
         return json_({ ok: true, result: Engine.grade(u, body.answers || {}) });
       }
       case 'changePassword': return json_(changePassword_(acc, body));
+      case 'teacherSetPassword': return json_(teacherSetPassword_(acc, body));   // 교사: 이메일 로그인용 비밀번호
       case 'linkPast': return json_(linkPast_(acc, body, today));          // 학생: 지난 학번 연결
       case 'pastView': return json_(pastView_(acc, body));                // 학생: 지난 학번 자료 보기
       case 'classmates': return json_(classmates_(acc));

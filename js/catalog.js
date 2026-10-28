@@ -131,7 +131,7 @@ const SAMPLE_SUMMARIES = [
 function applyCustomItems(list) {
   (list || []).forEach(x => {
     const base = ITEMS[x.shape] || ITEMS.chair; if (!x.id || !base) return;
-    ITEMS[x.id] = Object.assign({}, base, { name: x.name || base.name, emoji: x.emoji || base.emoji, rarity: RARITY[x.rarity] ? x.rarity : base.rarity,
+    ITEMS[x.id] = Object.assign({}, base, { name: x.name || base.name, emoji: String(x.emoji || '').trim() || base.emoji || '🪑', rarity: RARITY[x.rarity] ? x.rarity : base.rarity,
       pool: x.enabled === false ? 'none' : (x.pool || 'shop'), cost: x.cost > 0 ? Number(x.cost) : undefined, shape: base.shape || x.shape, custom: true });
   });
 }

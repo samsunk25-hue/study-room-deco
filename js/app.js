@@ -174,11 +174,25 @@ function renderLogin(mode = 'login', msg = '') {
     body.innerHTML = `<h2>👩‍🏫 교사로 접속</h2>
       ${msg ? `<div class="notice">${esc(msg)}</div>` : ''}
       <p class="muted small">스터디룸 DB 시트의 메뉴 <b>🏠 스터디룸 → ⑧ 내 교사 접속 코드 보기</b>에서 받은 코드를 붙여 넣으세요. (구글 계정 + 관리자 승인으로 발급) 교사는 시간 제한 없이 사용하고 모든 학생 방을 볼 수 있어요.</p>
-      <label>교사 접속 코드 <input id="f-code" type="text" placeholder="예: AB12-CD34 (8자리)" maxlength="20" autocomplete="off"></label>
-      <button id="f-go" class="btn primary big">교사로 들어가기</button>
+      <div id="f-tmail">
+        <label>교사 이메일 <input id="f-email" type="email" placeholder="예: teacher@school.kr" maxlength="80" autocomplete="username" value="${esc(localStorage.getItem('studyroom_temail') || '')}"></label>
+        <label>교사 비밀번호 <input id="f-tpw" type="password" maxlength="40" autocomplete="current-password"></label>
+        <button id="f-go" class="btn primary big">교사로 들어가기</button>
+        <p class="small" style="margin-top:10px"><button class="link" id="f-usecode">처음이거나 비밀번호를 잊었어요 → 접속 코드로 들어가기</button></p>
+      </div>
+      <div id="f-tcode" class="hidden">
+        <label>교사 접속 코드 <input id="f-code" type="text" placeholder="예: AB12-CD34 (8자리)" maxlength="20" autocomplete="off"></label>
+        <button id="f-go2" class="btn primary big">코드로 들어가기</button>
+        <p class="muted small" style="margin-top:8px">들어간 뒤 <b>교사 탭 → 🔑 교사 비밀번호</b>에서 비밀번호를 정하면 다음부터는 이메일로 바로 들어와요.</p>
+        <p class="small" style="margin-top:10px"><button class="link" id="f-usemail">← 이메일로 들어가기</button></p>
+      </div>
       <p class="small" style="margin-top:12px"><button class="link" id="f-back">← 학생 로그인</button></p>`;
     $('#f-back').onclick = () => renderLogin('login');
-    $('#f-go').onclick = () => auth('teacherLogin', { code: $('#f-code').value.trim() });
+    $('#f-usecode').onclick = () => { $('#f-tmail').classList.add('hidden'); $('#f-tcode').classList.remove('hidden'); };
+    $('#f-usemail').onclick = () => { $('#f-tcode').classList.add('hidden'); $('#f-tmail').classList.remove('hidden'); };
+    $('#f-go').onclick = () => { const email = $('#f-email').value.trim().toLowerCase(); try { localStorage.setItem('studyroom_temail', email); } catch (e) { /* ignore */ } auth('teacherLogin', { email, password: $('#f-tpw').value }); };
+    $('#f-tpw').onkeydown = e => { if (e.key === 'Enter') $('#f-go').click(); };
+    $('#f-go2').onclick = () => auth('teacherLogin', { code: $('#f-code').value.trim() }, '#f-go2');
   } else {
     body.innerHTML = `<h2>👋 처음 만들기</h2>
       <div class="notice">학번·이름·비밀번호와 학습 기록은 <b>선생님이 지정한 학교 폴더에만</b> 저장되고 외부로 전송되지 않아요. 비밀번호는 암호화되어 저장돼요.</div>
@@ -198,12 +212,12 @@ function renderLogin(mode = 'login', msg = '') {
     };
   }
 }
-async function auth(action, payload) {
+async function auth(action, payload, btnSel = '#f-go') {
   const mode = action === 'teacherLogin' ? 'teacher' : action;
-  if (action === 'teacherLogin' && !payload.code) return toast('교사 접속 코드를 입력해 주세요', 'bad');
+  if (action === 'teacherLogin' && !payload.code && !(payload.email && payload.password)) return toast(payload.email !== undefined ? '이메일과 비밀번호를 입력해 주세요' : '교사 접속 코드를 입력해 주세요', 'bad');
   if (action !== 'teacherLogin' && !payload.id) return toast('학번을 입력해 주세요', 'bad');
   if (action === 'register' && !payload.name) return toast('이름을 입력해 주세요', 'bad');
-  $('#f-go').disabled = true; $('#f-go').textContent = '확인 중...';
+  $(btnSel).disabled = true; $(btnSel).textContent = '확인 중...';
   try {
     const r = await API.call(Object.assign({ action }, payload));
     if (!r.ok) {
@@ -726,7 +740,7 @@ function renderShop() {
     <div class="shop-grid"><div class="card shop-item"><div class="emoji">📷</div><b>커스텀 사진 액자</b><p class="small muted">빈 액자를 사서 사진을 올려요. 개인정보·초상권·저작권 확인 후 올릴 수 있고, 선생님이 승인하면 컬러로 전시돼요. (월 1회)</p>
       <div class="price">🪙 ${ITEMS.photo_frame.cost}</div><button class="btn primary" id="buy-frame" ${hasFrame ? 'disabled' : ''}>${hasFrame ? '빈 액자 보유 중' : '구매'}</button></div></div>
     <h3 style="margin-top:14px">🪑 가구 상점 <small class="muted">— 산 가구는 내 방 보관함에 들어가요</small></h3>
-    <div class="shop-grid">${Object.keys(ITEMS).filter(k => (ITEMS[k].pool === 'box' || ITEMS[k].pool === 'shop') && k !== 'photo_frame').map(k => { const d = ITEMS[k], r = RARITY[d.rarity], p = d.cost > 0 ? d.cost : ((CONFIG.shopPrice || {})[d.rarity] || 100); return `<div class="card shop-item"><div class="emoji">${d.emoji}</div><b>${esc(d.name)}</b> <span class="rar small" style="color:${r.color}">${r.name}</span><div class="price">🪙 ${p}</div>${isTeacher() && !d.custom ? `<label class="small" style="margin:4px 0">가격 <input type="number" min="0" class="item-price" data-id="${k}" value="${itemPrices[k] || ''}" placeholder="${(CONFIG.shopPrice || {})[d.rarity] || 100}" style="width:90px;padding:4px 6px"></label>` : ''}<button class="btn primary buy-item" data-id="${k}">구매</button></div>`; }).join('')}</div>${isTeacher() ? '<div class="btn-row"><button class="btn primary" id="save-item-prices">가구별 가격 저장</button><span class="muted small">비우면 희귀도 기본가로 돌아가요. 교사가 추가한 가구는 가구 추가 칸에서 가격을 정해요.</span></div>' : ''}
+    <div class="shop-grid">${Object.keys(ITEMS).filter(k => (ITEMS[k].pool === 'box' || ITEMS[k].pool === 'shop') && k !== 'photo_frame').map(k => { const d = ITEMS[k], r = RARITY[d.rarity], p = d.cost > 0 ? d.cost : ((CONFIG.shopPrice || {})[d.rarity] || 100); return `<div class="card shop-item"><div class="emoji">${d.emoji || '🪑'}</div><b>${esc(d.name)}</b> <span class="rar small" style="color:${r.color}">${r.name}</span><div class="price">🪙 ${p}</div>${isTeacher() && !d.custom ? `<label class="small" style="margin:4px 0 6px">가격 <input type="number" min="0" class="item-price" data-id="${k}" value="${itemPrices[k] || ''}" placeholder="${(CONFIG.shopPrice || {})[d.rarity] || 100}"></label>` : ''}<button class="btn primary buy-item" data-id="${k}">구매</button></div>`; }).join('')}</div>${isTeacher() ? '<div class="btn-row"><button class="btn primary" id="save-item-prices">가구별 가격 저장</button><span class="muted small">비우면 희귀도 기본가로 돌아가요. 교사가 추가한 가구는 가구 추가 칸에서 가격을 정해요.</span></div>' : ''}
     <h3 style="margin-top:14px">🎟️ O2O 비밀 상점 <small class="muted">— 현실 교실 쿠폰 (선생님 승인 후 사용)</small></h3>
     <div class="shop-grid">${coupons.map(cp => `<div class="card shop-item"><div class="emoji">🎟️</div><b>${esc(cp.name)}</b><p class="small muted">${esc(cp.desc)}</p><div class="price">🪙 ${cp.cost}</div><button class="btn primary buy-coupon" data-id="${cp.id}">구매</button></div>`).join('')}</div>
     ${isTeacher() ? '' : `<div class="card" style="margin-top:14px"><h3>내 쿠폰</h3>${state.coupons.length ? state.coupons.map(c => `<div class="rec"><b>${esc(c.name)}</b> <span class="muted small">${shortDate(c.date)}</span> <span class="tag ${c.status === 'approved' ? 'pass' : (c.status === 'used' || c.status === 'rejected') ? 'fail' : 'best'}">${{ pending: '승인 대기', approved: '사용 가능', used: '사용 완료', rejected: '거절됨 (코인 환불)' }[c.status] || c.status}</span></div>`).join('') : '<p class="muted small">아직 쿠폰이 없어요.</p>'}</div>`}`;
@@ -793,6 +807,9 @@ let tAdmin = { settings: null, coupons: null, unitId: null, topicId: null, quest
 async function renderTeacherServer(body) {
   body.innerHTML = `
     <div class="card" style="background:#eef6ff"><h3>👩‍🏫 교사로 접속 중</h3><p class="small">심야·수업 시간 잠금이 적용되지 않고 코인은 무제한이에요. 친구 방 탭에서 모든 학생의 방과 학습자료를 볼 수 있어요. 이 계정의 방은 시험용이라 평가기록부에 들어가지 않아요.</p></div>
+    <div class="card"><h3>🔑 교사 비밀번호 <small class="muted">— 정해 두면 접속 코드 없이 이메일로 들어와요</small></h3>
+      <div class="field-row"><label style="flex:1 1 160px">새 비밀번호 (6자 이상) <input type="password" id="t-pw1" maxlength="40" autocomplete="new-password"></label><label style="flex:1 1 160px">한 번 더 <input type="password" id="t-pw2" maxlength="40" autocomplete="new-password"></label><button class="btn primary" id="t-pw-save" style="margin-bottom:1px">저장</button></div>
+      <p class="muted small">내 이메일: <b>${esc((API.getSession() || {}).id || '').replace(/^T:/, '')}</b> · 비밀번호는 암호화되어 교사 시트에 저장돼요. 잊으면 시트 메뉴 ⑧의 접속 코드로 들어와 다시 정하면 돼요.</p></div>
     <div class="card" id="t-settings"><h3>⚙️ 설정</h3><p class="muted small">불러오는 중...</p></div>
     <div class="card"><h3>🪙 코인 일괄 지급</h3><p class="muted small">전체 학생 또는 학번 목록에 코인을 한 번에 더해요. (학급 협동 미션 달성, 행사 보상 등)</p><div class="btn-row" style="align-items:flex-end"><label style="margin:0;width:120px">금액 <input type="number" id="t-grant-amt" min="1" max="10000" value="100"></label><label style="margin:0;flex:1;min-width:220px">대상 학번 <input type="text" id="t-grant-ids" placeholder="비우면 전체 학생 · 여러 명은 쉼표로 (예: 10301, 10302)" autocomplete="off"></label><button class="btn primary" id="t-grant">지급</button></div></div>
     <div class="card" id="t-events"><h3>🎉 이벤트 관리</h3></div>
@@ -1091,6 +1108,15 @@ async function renderTeacherLibrary() {
   $('#tl-refresh').onclick = () => { tLib.rows = null; renderTeacherLibrary(); };
 }
 
+/* ---------------- 교사: 비밀번호 설정 ---------------- */
+document.addEventListener('click', async e => {
+  if (!e.target || e.target.id !== 't-pw-save') return;
+  const a = $('#t-pw1').value, b = $('#t-pw2').value;
+  if (a.length < 6) return toast('비밀번호는 6자 이상이에요', 'bad');
+  if (a !== b) return toast('두 비밀번호가 달라요', 'bad');
+  const r = await API.call({ action: 'teacherSetPassword', password: a }).catch(() => ({ ok: false, message: '연결 실패' }));
+  if (r.ok) { $('#t-pw1').value = ''; $('#t-pw2').value = ''; toast('교사 비밀번호를 저장했어요. 다음부터 이메일로 들어오세요', 'ok'); } else toast(r.message || '저장에 실패했어요', 'bad');
+});
 /* ---------------- 교사: 가격 설정 (상점) ---------------- */
 function renderTPrices() {
   const box = $('#t-prices'); if (!box) return;
@@ -1113,14 +1139,14 @@ function renderTItems() {
   box.innerHTML = `<h3>🪑 가구 추가 <small class="muted">— 교사에게만 보여요 · 기존 가구 모양을 빌려 새 가구를 만들어요</small></h3>
     <p class="muted small">이름·이모지·희귀도·가격을 정하고 모양을 고르세요. "상점 판매"를 끄면 상점에서 사라지고, "상자 드롭"을 켜면 요약 통과 가구 상자에서도 나와요. 삭제해도 이미 가진 학생의 방에서는 없어지지 않아요.</p>
     ${list.map((x, i) => `<div class="summary-card"><div class="meta"><span><b>${esc(x.emoji || '')} ${esc(x.name || '(이름 없음)')}</b> <small class="muted">${esc(x.id)}</small></span><button class="btn tiny danger ti-del" data-i="${i}">삭제</button></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
-        <label style="flex:2;margin:0">이름 <input type="text" data-i="${i}" data-k="name" value="${esc(x.name)}" maxlength="20"></label>
-        <label style="width:80px;margin:0">이모지 <input type="text" data-i="${i}" data-k="emoji" value="${esc(x.emoji)}" maxlength="4"></label>
-        <label style="flex:2;margin:0">모양 <select data-i="${i}" data-k="shape">${shapes.map(k => `<option value="${k}" ${x.shape === k ? 'selected' : ''}>${ITEMS[k].emoji} ${esc(ITEMS[k].name)}${ITEMS[k].wall ? ' (벽)' : ''}</option>`).join('')}</select></label>
-        <label style="width:110px;margin:0">희귀도 <select data-i="${i}" data-k="rarity">${Object.keys(RARITY).map(k => `<option value="${k}" ${x.rarity === k ? 'selected' : ''}>${RARITY[k].name}</option>`).join('')}</select></label>
-        <label style="width:110px;margin:0">가격 <input type="number" min="0" data-i="${i}" data-k="cost" value="${x.cost || ''}" placeholder="기본가"></label>
-        <label class="toggle" style="margin:0"><input type="checkbox" data-i="${i}" data-k="sell" ${x.sell !== false ? 'checked' : ''}> 상점 판매</label>
-        <label class="toggle" style="margin:0"><input type="checkbox" data-i="${i}" data-k="box" ${x.pool === 'box' ? 'checked' : ''}> 상자 드롭</label>
+      <div class="field-row">
+        <label style="flex:2 1 140px">이름 <input type="text" data-i="${i}" data-k="name" value="${esc(x.name)}" maxlength="20" placeholder="예: 황금 의자"></label>
+        <label style="flex:0 0 84px">이모지 <input type="text" data-i="${i}" data-k="emoji" value="${esc(x.emoji)}" maxlength="4" placeholder="🪑"></label>
+        <label style="flex:2 1 160px">모양 <select data-i="${i}" data-k="shape">${shapes.map(k => `<option value="${k}" ${x.shape === k ? 'selected' : ''}>${ITEMS[k].emoji} ${esc(ITEMS[k].name)}${ITEMS[k].wall ? ' (벽)' : ''}</option>`).join('')}</select></label>
+        <label style="flex:0 0 110px">희귀도 <select data-i="${i}" data-k="rarity">${Object.keys(RARITY).map(k => `<option value="${k}" ${x.rarity === k ? 'selected' : ''}>${RARITY[k].name}</option>`).join('')}</select></label>
+        <label style="flex:0 0 110px">가격 (코인) <input type="number" min="0" data-i="${i}" data-k="cost" value="${x.cost || ''}" placeholder="기본가"></label>
+        <label class="toggle"><input type="checkbox" data-i="${i}" data-k="sell" ${x.sell !== false ? 'checked' : ''}> 상점 판매</label>
+        <label class="toggle"><input type="checkbox" data-i="${i}" data-k="box" ${x.pool === 'box' ? 'checked' : ''}> 상자 드롭</label>
       </div></div>`).join('')}
     ${list.length ? '' : '<p class="muted small">아직 추가한 가구가 없어요.</p>'}
     <div class="btn-row"><button class="btn" id="ti-add">+ 가구 추가</button><button class="btn primary" id="ti-save">가구 저장</button></div>`;
