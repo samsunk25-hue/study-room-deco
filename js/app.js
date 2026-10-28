@@ -186,6 +186,7 @@ function renderLogin(mode = 'login', msg = '') {
         <label>교사 접속 코드 <input id="f-code" type="text" placeholder="예: AB12-CD34 (8자리)" maxlength="20" autocomplete="off"></label>
         <label>교사 이메일 (코드를 받은 구글 계정) <input id="f-email2" type="email" placeholder="예: teacher@school.kr" maxlength="80" autocomplete="username" value="${esc(localStorage.getItem('studyroom_temail') || '')}"></label>
         <label>앞으로 쓸 비밀번호 (6자 이상) <input id="f-pw-new" type="password" maxlength="40" autocomplete="new-password"></label>
+        <div class="notice small">⚠️ 교사 비밀번호는 관리자가 확인할 수 있어요. 은행·포털 등 다른 곳에서 쓰는 중요한 비밀번호는 쓰지 말고, 이 앱 전용 비밀번호를 정해 주세요.</div>
         <button id="f-go2" class="btn primary big">등록하고 들어가기</button>
         <p class="small" style="margin-top:10px"><button class="link" id="f-usemail">← 이메일로 들어가기</button></p>
       </div>
@@ -819,7 +820,8 @@ async function renderTeacherServer(body) {
     <div class="card" style="background:#eef6ff"><h3>👩‍🏫 교사로 접속 중</h3><p class="small">심야·수업 시간 잠금이 적용되지 않고 코인은 무제한이에요. 친구 방 탭에서 모든 학생의 방과 학습자료를 볼 수 있어요. 이 계정의 방은 시험용이라 평가기록부에 들어가지 않아요.</p></div>
     <div class="card"><h3>🔑 교사 비밀번호 바꾸기 <small class="muted">— 이메일 로그인에 쓰는 비밀번호</small></h3>
       <div class="field-row"><label style="flex:1 1 160px">새 비밀번호 (6자 이상) <input type="password" id="t-pw1" maxlength="40" autocomplete="new-password"></label><label style="flex:1 1 160px">한 번 더 <input type="password" id="t-pw2" maxlength="40" autocomplete="new-password"></label><button class="btn primary" id="t-pw-save" style="margin-bottom:1px">저장</button></div>
-      <p class="muted small">내 이메일: <b>${esc((API.getSession() || {}).id || '').replace(/^T:/, '')}</b> · 비밀번호는 암호화되어 교사 시트에 저장돼요. 잊으면 시트 메뉴 ⑧의 접속 코드로 들어와 다시 정하면 돼요.</p></div>
+      <p class="muted small">내 이메일: <b>${esc((API.getSession() || {}).id || '').replace(/^T:/, '')}</b> · 잊으면 시트 메뉴 ⑧의 접속 코드로 들어와 다시 정하거나 관리자에게 물어보면 돼요.</p>
+      <div class="notice small">⚠️ 교사 비밀번호는 관리자가 확인할 수 있어요. 은행·포털 등 다른 곳에서 쓰는 중요한 비밀번호는 쓰지 말고, 이 앱 전용 비밀번호를 정해 주세요.</div></div>
     <div class="card" id="t-settings"><h3>⚙️ 설정</h3><p class="muted small">불러오는 중...</p></div>
     <div class="card"><h3>🪙 코인 일괄 지급</h3><p class="muted small">전체 학생 또는 학번 목록에 코인을 한 번에 더해요. (학급 협동 미션 달성, 행사 보상 등)</p><div class="btn-row" style="align-items:flex-end"><label style="margin:0;width:120px">금액 <input type="number" id="t-grant-amt" min="1" max="10000" value="100"></label><label style="margin:0;flex:1;min-width:220px">대상 학번 <input type="text" id="t-grant-ids" placeholder="비우면 전체 학생 · 여러 명은 쉼표로 (예: 10301, 10302)" autocomplete="off"></label><button class="btn primary" id="t-grant">지급</button></div></div>
     ${isAdmin() ? '<div class="card" id="t-teachers" style="background:#fff7ed"><h3>👩‍🏫 교사 등록·승인</h3><p class="muted small">불러오는 중...</p></div>' : ''}
@@ -1132,6 +1134,7 @@ function renderTTeachers() {
   const list = tAdmin.teachers;
   box.innerHTML = `<h3>👩‍🏫 교사 등록·승인 <small class="muted">— 관리자(시트 소유자)에게만 보여요</small></h3>
     <p class="muted small">이메일과 이름을 넣고 <b>승인</b>을 켜면 그 선생님이 교사로 들어올 수 있어요. <b>비밀번호</b> 칸에는 지금 비밀번호가 보이고, 새로 입력하면 바뀌어요. 비밀번호를 정해 주면 접속 코드 없이 이메일+비밀번호로 바로 들어오고, 비워 두면 선생님이 접속 코드로 처음 등록해요. 승인하면 학교 폴더도 함께 공유돼요.</p>
+    <div class="notice small">⚠️ 교사 비밀번호는 관리자가 확인할 수 있어요. 은행·포털 등 다른 곳에서 쓰는 중요한 비밀번호는 쓰지 말고, 이 앱 전용 비밀번호를 정해 주세요. 선생님들께도 이 점을 알려 주세요.</div>
     <div class="sheet-wrap"><table class="sheet"><thead><tr><th>이메일</th><th>이름</th><th>승인</th><th>비밀번호 <small class="muted">(현재 · 새로 정하기)</small></th><th></th></tr></thead><tbody>
     ${list.map((t, i) => { const own = t.email === tAdmin.owner; return `<tr><td><input type="text" data-i="${i}" data-k="email" value="${esc(t.email)}" maxlength="80" placeholder="teacher@school.kr" ${own ? 'disabled' : ''}></td>
       <td><input type="text" data-i="${i}" data-k="name" value="${esc(t.name)}" maxlength="20" placeholder="이름"></td>
