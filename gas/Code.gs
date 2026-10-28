@@ -370,21 +370,36 @@ function questionMap_() {
   });
   return map;
 }
+/** 시트 셀 값 → 문자열. 시트가 "1:16" 같은 값을 시간(Date)으로 바꿔 둔 경우 원래 글자로 되돌림 */
+function cellStr_(v) {
+  if (v === null || v === undefined) return '';
+  if (v instanceof Date) {
+    const h = v.getHours(), m = v.getMinutes(), s = v.getSeconds();
+    if (v.getFullYear() < 1905) return h + ':' + (m < 10 ? '0' : '') + m + (s ? ':' + (s < 10 ? '0' : '') + s : '');   // 시간으로 오인된 값
+    return Utilities.formatDate(v, 'Asia/Seoul', 'yyyy-MM-dd');
+  }
+  return String(v).trim();
+}
 function parseQuestionRow_(r) {
-  const id = String(r[0] || '').trim(), type = String(r[1] || '').trim(), text = String(r[2] || '').trim();
+  const id = cellStr_(r[0]), type = cellStr_(r[1]), text = cellStr_(r[2]);
   if (!id || !text || r[9] === false) return null;
   if (/^객관식/.test(type)) {
-    const choices = [r[3], r[4], r[5], r[6]].map(x => String(x === null || x === undefined ? '' : x).trim()).filter(Boolean);
+    const choices = [r[3], r[4], r[5], r[6]].map(cellStr_).filter(Boolean);
     const ans = Number(r[7]) - 1;
     if (choices.length < 2 || !(ans >= 0 && ans < choices.length)) return null;
-    return { type: 'mc', q: text, choices, answer: ans, hint: String(r[8] || '') };
+    return { type: 'mc', q: text, choices, answer: ans, hint: cellStr_(r[8]) };
   }
   if (/^단답형/.test(type)) {
-    const answers = String(r[7] || '').split(';').map(x => x.trim()).filter(Boolean);
+    const answers = cellStr_(r[7]).split(';').map(x => x.trim()).filter(Boolean);
     if (!answers.length) return null;
-    return { type: 'short', q: text, answers, hint: String(r[8] || '') };
+    return { type: 'short', q: text, answers, hint: cellStr_(r[8]) };
   }
   return null;
+}
+/** 문항 행을 쓸 때 자동 변환(시간·날짜·수식)을 막기 위해 글자 칸을 텍스트 서식으로 고정 */
+function textFormatQuestionRange_(sh, startRow, count) {
+  sh.getRange(startRow, 1, count, 7).setNumberFormat('@');   // ID·유형·질문·보기1~4
+  sh.getRange(startRow, 9, count, 1).setNumberFormat('@');   // 힌트
 }
 function questionToRow_(id, q) {
   return q.type === 'mc'
@@ -397,9 +412,9 @@ function replaceQuestionRows_(id, questions) {
   for (let r = n; r >= 2; r--) if (String(sh.getRange(r, 1).getValue()).trim() === id) sh.deleteRow(r);
   if (questions.length) {
     const start = sh.getLastRow() + 1;
+    textFormatQuestionRange_(sh, start, questions.length);
     sh.getRange(start, 1, questions.length, QUESTION_HEADER.length).setValues(questions.map(q => questionToRow_(id, q)));
     sh.getRange(start, 10, questions.length, 1).insertCheckboxes();
-    sh.getRange(start, 1, questions.length, 1).setNumberFormat('@');
   }
   cache_().remove('units');
 }
@@ -789,9 +804,15 @@ function fillSampleUnits() {
   UNITS.forEach(u => { if (!have[u.id]) u.questions.forEach(q => qrows.push(questionToRow_(u.id, q))); });
   if (qrows.length) {
     const start = qs.getLastRow() + 1;
+    textFormatQuestionRange_(qs, start, qrows.length);
     qs.getRange(start, 1, qrows.length, QUESTION_HEADER.length).setValues(qrows);
     qs.getRange(start, 10, qrows.length, 1).insertCheckboxes();
-    qs.getRange(start, 1, qrows.length, 1).setNumberFormat('@');
+  }
+  // 이미 들어 있는 행도 텍스트 서식으로 고정 + 시간으로 바뀐 값 복구
+  if (qs.getLastRow() > 1) {
+    const n = qs.getLastRow() - 1; const rng = qs.getRange(2, 1, n, 9); const vals = rng.getValues();
+    const fixed = vals.map(r => r.map((v, j) => (j === 7 ? v : cellStr_(v))));
+    textFormatQuestionRange_(qs, 2, n); rng.setValues(fixed);
   }
   qs.setColumnWidths(3, 1, 320); qs.setFrozenRows(1);
   cache_().remove('units');
