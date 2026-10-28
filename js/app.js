@@ -12,6 +12,7 @@ const pad = n => String(n).padStart(2, '0');
 
 let state = null, topics = [], units = [], currentRoomId = null, serverOffset = 0;
 let coupons = CONFIG.coupons.slice();   // 서버 모드에서는 쿠폰 시트 내용으로 교체됨
+let events = Engine.defaultEvents();    // 서버 모드에서는 이벤트 시트 내용으로 교체됨
 let myRoom = null, visitRoom = null;
 let study = { step: 'units' };
 let teacherOpen = false;
@@ -23,7 +24,7 @@ let pollTimer = null;
 function todayKey(d = new Date(Date.now() + serverOffset)) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
 function monthKey() { return todayKey().slice(0, 7); }
 function shortDate(key) { return key.slice(5).replace('-', '/'); }
-function ctx() { return { topics, units, coupons, today: todayKey(), rng: Math.random }; }
+function ctx() { return { topics, units, coupons, events, today: todayKey(), rng: Math.random }; }
 function unitOf(id) { return units.find(u => u.id === id); }
 function topicOf(id) { return topics.find(t => t.id === id); }
 function topicCode(id) { const t = topicOf(id); return t && t.code ? t.code : ''; }
@@ -40,9 +41,9 @@ function updateHeader() {
   if (!state) return;
   $('#coin-display').textContent = isTeacher() ? '🪙 ∞' : `🪙 ${state.coins}`;
   $('#user-display').textContent = isTeacher() ? `👩‍🏫 ${state.student.name} · 시간 제한 없음` : (state.student ? `${state.student.name} (${state.student.id})` : '');
-  const ev = Engine.eventActive(state, todayKey());
-  $('#event-badge').classList.toggle('hidden', !ev);
-  if (ev) $('#event-badge').textContent = '🎉 ' + CONFIG.event.name;
+  const act = Engine.activeEvents(state, todayKey(), events);
+  $('#event-badge').classList.toggle('hidden', !act.length);
+  if (act.length) $('#event-badge').textContent = '🎉 ' + act.map(e => e.name).join(' · ');
 }
 function showScreen(name) {
   $$('.screen').forEach(s => s.classList.toggle('active', s.id === 'screen-' + name));
@@ -85,7 +86,7 @@ async function dispatch(cmd, interactive = false) {
 async function reloadFromServer() {
   try {
     const r = await API.call({ action: 'load' });
-    if (r.ok) { if (r.units) setTopics(r.units); if (r.coupons) coupons = r.coupons; state = Engine.migrate(r.state, units); inbox = r.inbox || inbox; updateHeader(); refreshCurrent(); }
+    if (r.ok) { if (r.units) setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; state = Engine.migrate(r.state, units); inbox = r.inbox || inbox; updateHeader(); refreshCurrent(); }
     else handleServerError(r);
   } catch (e) { /* 다음 기회에 */ }
 }
@@ -197,7 +198,7 @@ async function auth(action, payload) {
       return renderLogin(mode, msg);
     }
     API.setSession({ token: r.token, id: r.id || payload.id, name: r.name, teacher: !!r.teacher });
-    setTopics(r.units); if (r.coupons) coupons = r.coupons; state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
+    setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
     $('#overlay-login').classList.add('hidden');
     if (r.mustChange) changePasswordModal(true);
     start();
@@ -417,12 +418,9 @@ function renderStudy() {
       <div class="btn-row">
         ${study.graded ? '<button class="btn primary big" id="btn-next">요약 쓰러 가기 →</button>' : '<button class="btn primary big" id="btn-grade">채점하기</button>'}
         <button class="btn ghost" id="btn-back">← 성취기준 선택</button>
-        ${isTeacher() ? '<button class="btn accent" id="btn-edit-q">✏️ 이 문항 수정 (교사)</button>' : ''}</div></div>`;
+        </div></div>${isTeacher() ? '<div class="card" id="t-questions" style="background:#eef6ff"></div>' : ''}`;
     $('#btn-back').onclick = () => { study = { step: 'topics', unit: u }; renderStudy(); };
-    const eq = $('#btn-edit-q'); if (eq) eq.onclick = () => {           // 교사: 이 성취기준의 문항 편집기로 바로 이동
-      tAdmin.unitId = u.id; tAdmin.topicId = t.id; showScreen('teacher');
-      setTimeout(() => { const el = $('#t-questions'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 600);
-    };
+    if (isTeacher()) { tAdmin.unitId = u.id; tAdmin.topicId = t.id; renderTQuestions(true); }   // 교사: 형성평가 아래에 이 성취기준의 문항 편집기
     if (study.graded) { showQuizFeedback(); $('#btn-next').onclick = () => { study.step = 'summary'; renderStudy(); }; }
     else $('#btn-grade').onclick = async () => {
       t.questions.forEach((q, i) => {
@@ -645,7 +643,7 @@ function renderVisit() {
 /* ---------------- 상점 ---------------- */
 function renderShop() {
   const room = currentRoom(); const hasFrame = room.inventory.some(i => i.id === 'photo_frame');
-  $('#shop-body').innerHTML = `
+  $('#shop-body').innerHTML = `${isTeacher() ? '<div class="card" id="t-coupons" style="background:#eef6ff"></div>' : ''}
     <div class="card"><h2>🛒 상점</h2><p class="muted small">코인은 요약을 통과하면 받아요. 색상·스타일 리폼은 내 방에서 가구를 선택해 할 수 있어요. 구매한 액자는 <b>${esc(unitTitle(currentRoomId))}</b> 방에 들어가요.</p></div>
     <h3>🖼️ 특별 아이템</h3>
     <div class="shop-grid"><div class="card shop-item"><div class="emoji">📷</div><b>커스텀 사진 액자</b><p class="small muted">빈 액자를 사서 사진을 올려요. 개인정보·초상권·저작권 확인 후 올릴 수 있고, 선생님이 승인하면 컬러로 전시돼요. (월 1회)</p>
@@ -653,6 +651,7 @@ function renderShop() {
     <h3 style="margin-top:14px">🎟️ O2O 비밀 상점 <small class="muted">— 현실 교실 쿠폰 (선생님 승인 후 사용)</small></h3>
     <div class="shop-grid">${coupons.map(cp => `<div class="card shop-item"><div class="emoji">🎟️</div><b>${esc(cp.name)}</b><p class="small muted">${esc(cp.desc)}</p><div class="price">🪙 ${cp.cost}</div><button class="btn primary buy-coupon" data-id="${cp.id}">구매</button></div>`).join('')}</div>
     <div class="card" style="margin-top:14px"><h3>내 쿠폰</h3>${state.coupons.length ? state.coupons.map(c => `<div class="rec"><b>${esc(c.name)}</b> <span class="muted small">${shortDate(c.date)}</span> <span class="tag ${c.status === 'approved' ? 'pass' : c.status === 'used' ? 'fail' : 'best'}">${{ pending: '승인 대기', approved: '사용 가능', used: '사용 완료' }[c.status]}</span></div>`).join('') : '<p class="muted small">아직 쿠폰이 없어요.</p>'}</div>`;
+  if (isTeacher()) { tAdmin.coupons = coupons.map(c => Object.assign({}, c)); renderTCoupons(); }
   const bf = $('#buy-frame'); if (bf) bf.onclick = async () => { const r = await dispatch({ type: 'buyFrame', unitId: currentRoomId }, true); if (r.ok) { renderShop(); toast('빈 액자를 샀어요! 내 방 보관함에서 벽에 걸고 사진을 올려 보세요.', 'ok'); } };
   $$('.buy-coupon').forEach(b => b.onclick = async () => { const r = await dispatch({ type: 'buyCoupon', id: b.dataset.id }, true); if (r.ok) { renderShop(); toast('쿠폰을 신청했어요. 선생님 승인을 기다려요!', 'ok'); } });
 }
@@ -713,8 +712,8 @@ async function renderTeacherServer(body) {
     <div class="card" style="background:#eef6ff"><h3>👩‍🏫 교사로 접속 중</h3><p class="small">심야·수업 시간 잠금이 적용되지 않고 코인은 무제한이에요. 친구 방 탭에서 모든 학생의 방과 학습자료를 볼 수 있어요. 이 계정의 방은 시험용이라 평가기록부에 들어가지 않아요.</p></div>
     <div class="card" id="t-approvals"><h3>✅ 승인 대기</h3><p class="muted small">불러오는 중...</p></div>
     <div class="card" id="t-settings"><h3>⚙️ 설정</h3><p class="muted small">불러오는 중...</p></div>
-    <div class="card" id="t-coupons"><h3>🎟️ 쿠폰 관리</h3><p class="muted small">불러오는 중...</p></div>
-    <div class="card" id="t-questions"><h3>📝 형성평가 문항 관리</h3></div>
+    <div class="card" id="t-events"><h3>🎉 이벤트 관리</h3></div>
+    <div class="card"><h3>📝 문항 · 🎟️ 쿠폰은 어디서?</h3><p class="small">형성평가 문항은 <b>학습하기 탭</b>에서 성취기준을 열면 형성평가 아래에 편집기가 나와요. 쿠폰은 <b>상점 탭</b> 위에 편집기가 있어요.</p></div>
     <div class="card"><h3>📌 시트에서 하는 일</h3><ul class="small">
       <li><b>사진·쿠폰 승인</b>: 승인요청 시트의 승인 체크박스를 켜면 학생이 다음 접속 때 반영돼요. (즉시 반영은 메뉴 ④)</li>
       <li><b>평가기록부</b>: 행=학번, 열=날짜. 10분마다 자동 갱신돼요. (즉시 갱신은 메뉴 ③)</li>
@@ -725,9 +724,34 @@ async function renderTeacherServer(body) {
     const r = await API.call({ action: 'getSettings' }); if (!r.ok) throw new Error(r.message || r.error);
     tAdmin.settings = r.settings; renderTSettings();
   } catch (e) { $('#t-settings').innerHTML = '<h3>⚙️ 설정</h3><p class="muted small">불러오지 못했어요: ' + esc(e.message) + '</p>'; }
-  tAdmin.coupons = coupons.map(c => Object.assign({}, c)); renderTCoupons();
-  renderTQuestions();
+  tAdmin.events = events.map(e => Object.assign({}, e, { itemIds: (e.itemIds || []).slice() })); renderTEvents();
   loadTApprovals();
+}
+function renderTEvents() {
+  const list = tAdmin.events; const box = $('#t-events'); if (!box) return;
+  const itemOpts = Object.keys(ITEMS).filter(k => ITEMS[k].pool !== 'special');
+  box.innerHTML = `<h3>🎉 이벤트 관리 <small class="muted">— 기간 중 요약 통과 시 한정 가구가 드롭돼요</small></h3>
+    ${list.map((e, i) => `<div class="summary-card"><div class="meta"><b>이벤트 ${i + 1}</b><button class="btn tiny danger te-del" data-i="${i}">삭제</button></div>
+      <label>이름 <input type="text" data-i="${i}" data-k="name" value="${esc(e.name)}" maxlength="30" placeholder="예: 부여 백제문화제 특별 주간"></label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><label style="flex:1">시작일 <input type="date" data-i="${i}" data-k="start" value="${esc(e.start)}"></label><label style="flex:1">종료일 <input type="date" data-i="${i}" data-k="end" value="${esc(e.end)}"></label><label style="width:120px">드롭 확률(%) <input type="text" inputmode="numeric" data-i="${i}" data-k="rate" value="${Math.round((e.dropRate || 0) * 100)}"></label></div>
+      <div class="row-label">한정 가구 (통과 시 이 중 하나가 드롭)</div><div class="chips">${itemOpts.map(k => `<label class="chip ${(e.itemIds || []).includes(k) ? 'on' : ''}" style="cursor:pointer"><input type="checkbox" data-i="${i}" data-item="${k}" ${(e.itemIds || []).includes(k) ? 'checked' : ''} style="display:none">${ITEMS[k].emoji} ${esc(ITEMS[k].name)}</label>`).join('')}</div>
+      <label class="toggle"><input type="checkbox" data-i="${i}" data-k="force" ${e.force ? 'checked' : ''}> 기간과 상관없이 지금 바로 활성화</label></div>`).join('')}
+    ${list.length ? '' : '<p class="muted small">이벤트가 없어요.</p>'}
+    <div class="btn-row"><button class="btn" id="te-add">+ 이벤트 추가</button><button class="btn primary" id="te-save">이벤트 저장</button></div>`;
+  const sync = () => {
+    $$('#t-events input[data-k]').forEach(el => { const e = list[+el.dataset.i]; if (!e) return; const k = el.dataset.k; if (k === 'force') e.force = el.checked; else if (k === 'rate') e.dropRate = Math.min(1, Math.max(0, (Number(el.value) || 0) / 100)); else e[k] = el.value; });
+    list.forEach((e, i) => { e.itemIds = $$(`#t-events input[data-item][data-i="${i}"]`).filter(c => c.checked).map(c => c.dataset.item); });
+  };
+  $$('#t-events input[data-item]').forEach(c => c.onchange = () => c.parentElement.classList.toggle('on', c.checked));
+  $$('.te-del').forEach(b => b.onclick = () => { sync(); list.splice(+b.dataset.i, 1); renderTEvents(); });
+  $('#te-add').onclick = () => { sync(); const t = todayKey(); list.push({ id: 'ev' + Date.now().toString(36), name: '', start: t, end: t, itemIds: [], dropRate: 0.35, force: false }); renderTEvents(); };
+  $('#te-save').onclick = async () => {
+    sync();
+    if (list.some(e => e.name.trim() && !e.itemIds.length)) return toast('한정 가구를 하나 이상 골라 주세요', 'bad');
+    const r = await API.call({ action: 'saveEvents', events: list }).catch(e => ({ ok: false, message: '연결 실패: ' + e.message }));
+    if (r.ok) { events = r.events; tAdmin.events = events.map(e => Object.assign({}, e, { itemIds: e.itemIds.slice() })); renderTEvents(); updateHeader(); toast(`이벤트 ${events.length}개를 저장했어요`, 'ok'); }
+    else toast('저장 실패: ' + (r.message || r.error || '알 수 없는 오류'), 'bad');
+  };
 }
 async function loadTApprovals() {
   const box = $('#t-approvals'); if (!box) return;
@@ -765,7 +789,8 @@ function renderTSettings() {
 }
 function renderTCoupons() {
   const list = tAdmin.coupons;
-  $('#t-coupons').innerHTML = `<h3>🎟️ 쿠폰 관리 <small class="muted">— 학생 상점에 보이는 현실 교실 쿠폰</small></h3>
+  if (!$('#t-coupons')) return;
+  $('#t-coupons').innerHTML = `<h3>🎟️ 쿠폰 관리 <small class="muted">— 교사에게만 보여요 · 저장하면 아래 상점에 바로 반영</small></h3>
     <div class="sheet-wrap"><table class="sheet"><thead><tr><th>이름</th><th>코인</th><th>설명</th><th></th></tr></thead><tbody>
     ${list.map((c, i) => `<tr><td><input type="text" data-i="${i}" data-k="name" value="${esc(c.name)}" maxlength="20" placeholder="예: 자리 선택권"></td><td><input type="text" inputmode="numeric" data-i="${i}" data-k="cost" value="${c.cost}" style="width:80px"></td><td><input type="text" data-i="${i}" data-k="desc" value="${esc(c.desc)}" maxlength="60" placeholder="설명"></td><td><button class="btn tiny danger tc-del" data-i="${i}">삭제</button></td></tr>`).join('')}
     </tbody></table></div>
@@ -778,20 +803,16 @@ function renderTCoupons() {
     sync();
     if (!list.some(c => c.name.trim())) return toast('쿠폰 이름을 입력해 주세요', 'bad');
     const r = await API.call({ action: 'saveCoupons', coupons: list }).catch(e => ({ ok: false, message: '연결 실패: ' + e.message }));
-    if (r.ok) { coupons = r.coupons; tAdmin.coupons = coupons.map(c => Object.assign({}, c)); renderTCoupons(); toast(`쿠폰 ${coupons.length}개를 저장했어요. 학생 상점에 바로 반영돼요`, 'ok'); }
+    if (r.ok) { coupons = r.coupons; tAdmin.coupons = coupons.map(c => Object.assign({}, c)); toast(`쿠폰 ${coupons.length}개를 저장했어요. 학생 상점에 바로 반영돼요`, 'ok'); renderShop(); }
     else toast('저장 실패: ' + (r.message || r.error || '알 수 없는 오류'), 'bad');
   };
 }
-function renderTQuestions() {
+function renderTQuestions(fixed) {
   const box = $('#t-questions'); if (!box) return;
   const u = unitOf(tAdmin.unitId) || units[0]; tAdmin.unitId = u ? u.id : null;
   const t = u && (u.topics.find(x => x.id === tAdmin.topicId) || u.topics[0]); tAdmin.topicId = t ? t.id : null;
-  box.innerHTML = `<h3>📝 형성평가 문항 관리 <small class="muted">— 성취기준마다 문항을 수정·추가·삭제</small></h3>
-    <div class="row-label">단원</div><select id="tq-unit">${units.map(x => `<option value="${esc(x.id)}" ${x.id === tAdmin.unitId ? 'selected' : ''}>${esc(x.subject)} · ${esc(x.title)}</option>`).join('')}</select>
-    <div class="row-label">성취기준</div><select id="tq-topic">${(u ? u.topics : []).map(x => `<option value="${esc(x.id)}" ${x.id === tAdmin.topicId ? 'selected' : ''}>${esc(x.code || '')} ${esc(x.standard.split('\n')[0].replace(/^\[[^\]]+\]\s*/, '').slice(0, 45))}</option>`).join('')}</select>
+  box.innerHTML = `<h3>✏️ 이 형성평가 문항 수정 <small class="muted">— 교사에게만 보여요 · ${esc(t ? t.code || '' : '')}</small></h3>
     <div id="tq-list" style="margin-top:10px"><p class="muted small">불러오는 중...</p></div>`;
-  $('#tq-unit').onchange = e => { tAdmin.unitId = e.target.value; tAdmin.topicId = null; renderTQuestions(); };
-  $('#tq-topic').onchange = e => { tAdmin.topicId = e.target.value; renderTQuestions(); };
   if (!t) { $('#tq-list').innerHTML = '<p class="muted">단원이 없어요.</p>'; return; }
   API.call({ action: 'questions', topicId: t.id }).then(r => {
     if (!r.ok) { $('#tq-list').innerHTML = '<p class="muted">' + esc(r.message || '불러오지 못했어요') + '</p>'; return; }
@@ -833,7 +854,7 @@ function renderTQList() {
       } else payload.push({ type: 'short', q: q.q, answers: q.answers || [], hint: q.hint });
     }
     const r = await API.call({ action: 'saveQuestions', topicId: tAdmin.topicId, questions: payload }).catch(() => ({ ok: false, message: '연결 실패' }));
-    if (r.ok) { toast(`문항 ${r.count}개를 저장했어요`, 'ok'); tAdmin.source = 'sheet'; const t = topicOf(tAdmin.topicId); if (t) t.questions = payload.filter(q => q.q.trim()).map(q => ({ type: q.type, q: q.q, choices: q.choices })); }
+    if (r.ok) { toast(`문항 ${r.count}개를 저장했어요`, 'ok'); tAdmin.source = 'sheet'; const t = topicOf(tAdmin.topicId); if (t) t.questions = payload.filter(q => q.q.trim()).map(q => ({ type: q.type, q: q.q, choices: q.choices })); if (study.step === 'quiz' && study.topic && study.topic.id === tAdmin.topicId) { study.answers = {}; study.graded = false; renderStudy(); } }
     else toast(r.message || '저장에 실패했어요', 'bad');
   };
 }
@@ -921,7 +942,7 @@ async function init() {
   try {
     const r = await API.call({ action: 'load' });
     if (!r.ok) { if (r.error === 'night_lock') { $('#overlay-login').classList.add('hidden'); return $('#overlay-lock').classList.remove('hidden'); } API.clearSession(); return renderLogin('login', r.message || '다시 로그인해 주세요'); }
-    setTopics(r.units); if (r.coupons) coupons = r.coupons; state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
+    setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
     $('#overlay-login').classList.add('hidden'); start();
   } catch (e) { renderLogin('login', '서버에 연결할 수 없어요. 인터넷을 확인한 뒤 다시 들어와 주세요.'); }
 }

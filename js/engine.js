@@ -82,13 +82,20 @@ const Engine = (() => {
     room(state, unitId).inventory.push(it);
     return it;
   }
-  function eventActive(state, today) {
-    if (state.settings.eventForce) return true;
-    return today >= CONFIG.event.start && today <= CONFIG.event.end;
+  /** 이벤트 목록: 서버(이벤트 시트) 또는 기본 CONFIG.event 하나 */
+  function defaultEvents() { return [Object.assign({ id: 'default', force: false }, CONFIG.event)]; }
+  /** 지금 진행 중인 이벤트들 (기간 안이거나 강제 활성화). 비어 있으면 이벤트 없음 */
+  function activeEvents(state, today, events) {
+    const list = (events && events.length) ? events : defaultEvents();
+    return list.filter(e => e.force || (state && state.settings.eventForce) || (today >= e.start && today <= e.end));
   }
-  function rollItem(state, today, rng) {
-    if (eventActive(state, today) && rng() < CONFIG.event.dropRate) {
-      const ids = CONFIG.event.itemIds; return ids[Math.floor(rng() * ids.length)];
+  function eventActive(state, today, events) { return activeEvents(state, today, events).length > 0; }
+  function rollItem(state, today, rng, events) {
+    const act = activeEvents(state, today, events).filter(e => (e.itemIds || []).some(id => ITEMS[id]));
+    if (act.length) {
+      const ev = act[Math.floor(rng() * act.length)];
+      const ids = ev.itemIds.filter(id => ITEMS[id]);
+      if (rng() < (ev.dropRate === undefined ? 0.35 : ev.dropRate)) return ids[Math.floor(rng() * ids.length)];
     }
     const pool = Object.keys(ITEMS).filter(k => ITEMS[k].pool === 'box');
     const total = pool.reduce((s, k) => s + RARITY[ITEMS[k].rarity].weight, 0);
@@ -112,7 +119,7 @@ const Engine = (() => {
   }
 
   /* ---------- 요약 제출 (판정 + 기록 + 부분 보상 + 먼지 괴물) ---------- */
-  function submit(state, topic, answers, text, today, rng) {
+  function submit(state, topic, answers, text, today, rng, events) {
     const rw = R();
     const unitId = unitIdOf(topic);
     const g = grade(topic, answers);
@@ -144,7 +151,7 @@ const Engine = (() => {
       if (!rec.passRewarded) {
         rec.passRewarded = true;
         bd.pass = rw.passCoin; if (rec.attempts === 1) bd.first = rw.firstTryBonus;
-        outcome.itemId = rollItem(state, today, rng);
+        outcome.itemId = rollItem(state, today, rng, events);
         outcome.itemUid = addItem(state, unitId, outcome.itemId, today).uid;
       } else outcome.practice = true;
     } else if (!r.monster && res.reason !== 'too_short') {
@@ -252,7 +259,7 @@ const Engine = (() => {
         if (!topic.keyConcepts) return fail('이 성취기준은 서버에서만 판정할 수 있어요');
         const text = String(cmd.text || '').slice(0, 2000);
         if (!text.trim()) return fail('요약을 입력해 주세요');
-        return { ok: true, result: submit(state, topic, cmd.answers || {}, text, ctx.today, ctx.rng || Math.random) };
+        return { ok: true, result: submit(state, topic, cmd.answers || {}, text, ctx.today, ctx.rng || Math.random, ctx.events) };
       }
       default:
         return fail('알 수 없는 명령이에요');
@@ -271,5 +278,5 @@ const Engine = (() => {
     return { name: state.student ? state.student.name : '', rooms, summaries };
   }
 
-  return { VERSION, N, newState, migrate, room, footprint, randomFreeTile, addItem, eventActive, rollItem, monthStats, grade, submit, apply, publicView, groupUnits, unitIdOf };
+  return { VERSION, N, newState, migrate, room, footprint, randomFreeTile, addItem, eventActive, activeEvents, defaultEvents, rollItem, monthStats, grade, submit, apply, publicView, groupUnits, unitIdOf };
 })();
