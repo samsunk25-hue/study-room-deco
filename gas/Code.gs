@@ -446,6 +446,7 @@ function teacherSetPassword_(acc, body) {
   }
   const salt = Utilities.getUuid();
   t.sheet.getRange(t.row, 5, 1, 2).setValues([[hash_(salt, pw), salt]]);
+  props_().setProperty('TPW_' + email, pw);   // 관리자가 앱 교사 탭에서 확인할 수 있게 보관
   return { ok: true };
 }
 function teacherEmailLogin_(body) {
@@ -530,7 +531,7 @@ function teacherList_(acc) {
   if (!isAdminAcc_(acc)) return fail_('forbidden', '관리자(시트 소유자)만 볼 수 있어요');
   const { rows } = teacherRows6_();
   const list = rows.filter(r => String(r[0]).trim()).map(r => ({ email: String(r[0]).trim().toLowerCase(), name: String(r[1] || ''), approved: r[2] === true,
-    created: r[3] instanceof Date ? todayKey_(r[3]) : String(r[3] || ''), hasPw: !!r[4] }));
+    created: r[3] instanceof Date ? todayKey_(r[3]) : String(r[3] || ''), hasPw: !!r[4], password: props_().getProperty('TPW_' + String(r[0]).trim().toLowerCase()) || '' }));
   return { ok: true, owner: ownerEmail_().toLowerCase(), teachers: list };
 }
 function saveTeachers_(acc, body) {
@@ -545,11 +546,12 @@ function saveTeachers_(acc, body) {
     const old = rows.find(r => String(r[0]).trim().toLowerCase() === email);
     let hash = old ? old[4] : '', salt = old ? old[5] : '';
     const pw = String(t.initPassword || '');
-    if (pw) { if (pw.length < 6 || pw.length > 40) return fail_('bad_pw', email + ': 초기 비밀번호는 6자 이상이에요'); salt = Utilities.getUuid(); hash = hash_(salt, pw); }
+    if (pw) { if (pw.length < 6 || pw.length > 40) return fail_('bad_pw', email + ': 비밀번호는 6자 이상이에요'); salt = Utilities.getUuid(); hash = hash_(salt, pw); props_().setProperty('TPW_' + email, pw); }
     const approved = t.approved === true;
     out.push([email, String(t.name || '').trim().slice(0, 20), approved, old && old[3] ? old[3] : todayKey_(), hash, salt]);
     if (approved && !(old && old[2] === true)) { try { folder_().addEditor(email); } catch (e) { /* 폴더 공유 실패는 무시 (수동 공유 가능) */ } }
   }
+  rows.forEach(r => { const e = String(r[0]).trim().toLowerCase(); if (e && !seen[e]) props_().deleteProperty('TPW_' + e); });   // 목록에서 빠진 교사의 보관 비밀번호 삭제
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return fail_('busy', '지금 접속이 많아요. 잠시 후 다시 시도해 주세요');
   try {

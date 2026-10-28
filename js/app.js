@@ -1131,12 +1131,12 @@ function renderTTeachers() {
   const box = $('#t-teachers'); if (!box) return;
   const list = tAdmin.teachers;
   box.innerHTML = `<h3>👩‍🏫 교사 등록·승인 <small class="muted">— 관리자(시트 소유자)에게만 보여요</small></h3>
-    <p class="muted small">이메일과 이름을 넣고 <b>승인</b>을 켜면 그 선생님이 교사로 들어올 수 있어요. <b>초기 비밀번호</b>를 정해 주면 접속 코드 없이 이메일+비밀번호로 바로 들어오고, 비워 두면 선생님이 접속 코드로 처음 등록해요. 승인하면 학교 폴더도 함께 공유돼요.</p>
-    <div class="sheet-wrap"><table class="sheet"><thead><tr><th>이메일</th><th>이름</th><th>승인</th><th>초기 비밀번호</th><th></th></tr></thead><tbody>
+    <p class="muted small">이메일과 이름을 넣고 <b>승인</b>을 켜면 그 선생님이 교사로 들어올 수 있어요. <b>비밀번호</b> 칸에는 지금 비밀번호가 보이고, 새로 입력하면 바뀌어요. 비밀번호를 정해 주면 접속 코드 없이 이메일+비밀번호로 바로 들어오고, 비워 두면 선생님이 접속 코드로 처음 등록해요. 승인하면 학교 폴더도 함께 공유돼요.</p>
+    <div class="sheet-wrap"><table class="sheet"><thead><tr><th>이메일</th><th>이름</th><th>승인</th><th>비밀번호 <small class="muted">(현재 · 새로 정하기)</small></th><th></th></tr></thead><tbody>
     ${list.map((t, i) => { const own = t.email === tAdmin.owner; return `<tr><td><input type="text" data-i="${i}" data-k="email" value="${esc(t.email)}" maxlength="80" placeholder="teacher@school.kr" ${own ? 'disabled' : ''}></td>
       <td><input type="text" data-i="${i}" data-k="name" value="${esc(t.name)}" maxlength="20" placeholder="이름"></td>
       <td style="text-align:center"><input type="checkbox" data-i="${i}" data-k="approved" ${t.approved ? 'checked' : ''} ${own ? 'disabled' : ''}>${own ? ' <small class="muted">관리자</small>' : ''}</td>
-      <td><input type="password" data-i="${i}" data-k="initPassword" value="${esc(t.initPassword || '')}" maxlength="40" autocomplete="new-password" placeholder="${t.hasPw ? '설정됨 (바꾸려면 입력)' : '없음 (6자 이상)'}"></td>
+      <td><div class="small" style="margin-bottom:4px">현재: <code>${esc(t.password || (t.hasPw ? '(확인 불가 · 새로 정해 주세요)' : '없음'))}</code></div><input type="text" data-i="${i}" data-k="initPassword" value="${esc(t.initPassword || '')}" maxlength="40" autocomplete="off" placeholder="새 비밀번호 (6자 이상)"></td>
       <td>${own ? '' : `<button class="btn tiny danger tt-del" data-i="${i}">삭제</button>`}</td></tr>`; }).join('')}
     </tbody></table></div>
     ${list.length ? '' : '<p class="muted small">등록된 교사가 없어요.</p>'}
