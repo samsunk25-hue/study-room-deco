@@ -660,8 +660,9 @@ function renderVisit() {
 /* ---------------- 상점 ---------------- */
 function renderShop() {
   const room = currentRoom(); const hasFrame = room.inventory.some(i => i.id === 'photo_frame');
-  $('#shop-body').innerHTML = `${isTeacher() ? '<div class="card" id="t-photo-approvals" style="background:#eef6ff"><h3>✅ 사진 액자 승인 대기</h3><p class="muted small">불러오는 중...</p></div><div class="card" id="t-coupon-approvals" style="background:#eef6ff"><h3>✅ 쿠폰 승인 대기</h3><p class="muted small">불러오는 중...</p></div><div class="card" id="t-coupons" style="background:#eef6ff"></div>' : ''}
+  $('#shop-body').innerHTML = `
     <div class="card"><h2>🛒 상점</h2><p class="muted small">코인은 요약을 통과하면 받아요. 색상·스타일 리폼은 내 방에서 가구를 선택해 할 수 있어요. 구매한 액자는 <b>${esc(unitTitle(currentRoomId))}</b> 방에 들어가요.</p></div>
+    ${isTeacher() ? '<div class="card" id="t-photo-approvals" style="background:#eef6ff"><h3>✅ 사진 액자 승인 대기</h3><p class="muted small">불러오는 중...</p></div><div class="card" id="t-coupon-approvals" style="background:#eef6ff"><h3>✅ 쿠폰 승인 대기</h3><p class="muted small">불러오는 중...</p></div><div class="card" id="t-coupons" style="background:#eef6ff"></div>' : ''}
     <h3>🖼️ 특별 아이템</h3>
     <div class="shop-grid"><div class="card shop-item"><div class="emoji">📷</div><b>커스텀 사진 액자</b><p class="small muted">빈 액자를 사서 사진을 올려요. 개인정보·초상권·저작권 확인 후 올릴 수 있고, 선생님이 승인하면 컬러로 전시돼요. (월 1회)</p>
       <div class="price">🪙 ${ITEMS.photo_frame.cost}</div><button class="btn primary" id="buy-frame" ${hasFrame ? 'disabled' : ''}>${hasFrame ? '이 방에 보유 중' : '구매'}</button></div></div>
