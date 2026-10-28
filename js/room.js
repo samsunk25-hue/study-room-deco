@@ -7,6 +7,7 @@ function createRoom(cv, roomGetter, hk) {
   const N = 8;            // 타일 수 (N x N)
   const TW = 64, TH = 32; // 타일 가로/세로(px)
   const WALL_H = 150;
+  const S = 1.4;            // 화면 확대 배율 (방이 캔버스를 더 채우도록)
 
   let canvas, ctx, ox, oy, getRoom, hooks;
   let selected = null;     // 선택된 아이템 uid
@@ -72,8 +73,8 @@ function createRoom(cv, roomGetter, hk) {
     const Wpx = wT * TW / 2;
     let o;
     ctx.save();
-    if (side === 'R') { o = P(pos, -0.03, zBottom + hPx); ctx.setTransform(1, 0.5, 0, 1, o.x, o.y); }
-    else { o = P(-0.03, pos + wT, zBottom + hPx); ctx.setTransform(1, -0.5, 0, 1, o.x, o.y); }
+    if (side === 'R') { o = P(pos, -0.03, zBottom + hPx); ctx.setTransform(S, 0.5 * S, 0, S, o.x * S, o.y * S); }
+    else { o = P(-0.03, pos + wT, zBottom + hPx); ctx.setTransform(S, -0.5 * S, 0, S, o.x * S, o.y * S); }
     drawFn(Wpx, hPx);
     ctx.restore();
     const dir = side === 'R' ? 0.5 : -0.5;
@@ -337,6 +338,7 @@ function createRoom(cv, roomGetter, hk) {
     t = performance.now();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(S, 0, 0, S, 0, 0);
     bboxes = []; bb = null;
 
     // 벽
@@ -406,7 +408,7 @@ function createRoom(cv, roomGetter, hk) {
     }
 
     if (hooks.isLocked && hooks.isLocked()) {
-      ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(0, 0, canvas.width / S, canvas.height / S);
     }
   }
   function loop() { render(); requestAnimationFrame(loop); }
@@ -414,7 +416,7 @@ function createRoom(cv, roomGetter, hk) {
   /* ---------- 입력 ---------- */
   function pos(e) {
     const r = canvas.getBoundingClientRect();
-    return { sx: (e.clientX - r.left) * canvas.width / r.width, sy: (e.clientY - r.top) * canvas.height / r.height };
+    return { sx: (e.clientX - r.left) * canvas.width / r.width / S, sy: (e.clientY - r.top) * canvas.height / r.height / S };
   }
   function bind() {
     canvas.addEventListener('pointerdown', e => {
@@ -467,7 +469,7 @@ function createRoom(cv, roomGetter, hk) {
   /* ---------- 공개 API ---------- */
   function init() {
     canvas = cv; ctx = cv.getContext('2d'); getRoom = roomGetter; hooks = hk || {};
-    ox = cv.width / 2; oy = 118;
+    ox = cv.width / 2 / S; oy = 160;
     bind();
     requestAnimationFrame(loop);
   }

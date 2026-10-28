@@ -650,7 +650,7 @@ function renderVisit() {
   $('#friends-body').innerHTML = `<div class="card"><div class="btn-row" style="margin:0 0 8px"><button class="btn ghost tiny" id="visit-back">← 친구 목록</button></div>
     <h2>🏠 ${esc(v.name)}의 방</h2>
     <div class="room-tabs">${ids.map(id => `<button class="room-tab ${id === friends.roomId ? 'on' : ''}" data-id="${esc(id)}">${esc(unitTitle(id))}</button>`).join('')}</div>
-    ${ids.length ? '<canvas id="visit-canvas" width="820" height="450"></canvas>' : '<p class="muted">아직 꾸민 방이 없어요.</p>'}</div>
+    ${ids.length ? '<canvas id="visit-canvas" width="820" height="600"></canvas>' : '<p class="muted">아직 꾸민 방이 없어요.</p>'}</div>
     <div class="card"><h3>📚 ${esc(v.name)}의 학습자료 <small class="muted">통과한 요약만 보여요</small></h3>
     ${v.summaries.length ? v.summaries.slice().reverse().map(s => `<div class="summary-card"><div class="meta"><span>${shortDate(s.date)} · ${esc(unitTitle(s.unitId))}${topicCode(s.topicId) ? ' · ' + esc(topicCode(s.topicId)) : ''}</span>
       ${friends.myStickers.includes(s.key) ? '<span class="tag best">✨ 스티커 남김</span>' : `<button class="btn tiny accent sticker" data-key="${esc(s.key)}">✨ 영감 스티커</button>`}</div><div>${esc(s.text)}</div></div>`).join('') : '<p class="muted">아직 학습자료가 없어요.</p>'}</div>${isTeacher() ? teacherVisitCard(v) : ''}`;
