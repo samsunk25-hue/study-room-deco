@@ -643,7 +643,7 @@ function renderVisit() {
 /* ---------------- 상점 ---------------- */
 function renderShop() {
   const room = currentRoom(); const hasFrame = room.inventory.some(i => i.id === 'photo_frame');
-  $('#shop-body').innerHTML = `${isTeacher() ? '<div class="card" id="t-coupons" style="background:#eef6ff"></div>' : ''}
+  $('#shop-body').innerHTML = `${isTeacher() ? '<div class="card" id="t-coupon-approvals" style="background:#eef6ff"><h3>✅ 쿠폰 승인 대기</h3><p class="muted small">불러오는 중...</p></div><div class="card" id="t-coupons" style="background:#eef6ff"></div>' : ''}
     <div class="card"><h2>🛒 상점</h2><p class="muted small">코인은 요약을 통과하면 받아요. 색상·스타일 리폼은 내 방에서 가구를 선택해 할 수 있어요. 구매한 액자는 <b>${esc(unitTitle(currentRoomId))}</b> 방에 들어가요.</p></div>
     <h3>🖼️ 특별 아이템</h3>
     <div class="shop-grid"><div class="card shop-item"><div class="emoji">📷</div><b>커스텀 사진 액자</b><p class="small muted">빈 액자를 사서 사진을 올려요. 개인정보·초상권·저작권 확인 후 올릴 수 있고, 선생님이 승인하면 컬러로 전시돼요. (월 1회)</p>
@@ -651,7 +651,7 @@ function renderShop() {
     <h3 style="margin-top:14px">🎟️ O2O 비밀 상점 <small class="muted">— 현실 교실 쿠폰 (선생님 승인 후 사용)</small></h3>
     <div class="shop-grid">${coupons.map(cp => `<div class="card shop-item"><div class="emoji">🎟️</div><b>${esc(cp.name)}</b><p class="small muted">${esc(cp.desc)}</p><div class="price">🪙 ${cp.cost}</div><button class="btn primary buy-coupon" data-id="${cp.id}">구매</button></div>`).join('')}</div>
     <div class="card" style="margin-top:14px"><h3>내 쿠폰</h3>${state.coupons.length ? state.coupons.map(c => `<div class="rec"><b>${esc(c.name)}</b> <span class="muted small">${shortDate(c.date)}</span> <span class="tag ${c.status === 'approved' ? 'pass' : c.status === 'used' ? 'fail' : 'best'}">${{ pending: '승인 대기', approved: '사용 가능', used: '사용 완료' }[c.status]}</span></div>`).join('') : '<p class="muted small">아직 쿠폰이 없어요.</p>'}</div>`;
-  if (isTeacher()) { tAdmin.coupons = coupons.map(c => Object.assign({}, c)); renderTCoupons(); }
+  if (isTeacher()) { tAdmin.coupons = coupons.map(c => Object.assign({}, c)); renderTCoupons(); loadTApprovals(); }
   const bf = $('#buy-frame'); if (bf) bf.onclick = async () => { const r = await dispatch({ type: 'buyFrame', unitId: currentRoomId }, true); if (r.ok) { renderShop(); toast('빈 액자를 샀어요! 내 방 보관함에서 벽에 걸고 사진을 올려 보세요.', 'ok'); } };
   $$('.buy-coupon').forEach(b => b.onclick = async () => { const r = await dispatch({ type: 'buyCoupon', id: b.dataset.id }, true); if (r.ok) { renderShop(); toast('쿠폰을 신청했어요. 선생님 승인을 기다려요!', 'ok'); } });
 }
@@ -710,7 +710,7 @@ let tAdmin = { settings: null, coupons: null, unitId: null, topicId: null, quest
 async function renderTeacherServer(body) {
   body.innerHTML = `
     <div class="card" style="background:#eef6ff"><h3>👩‍🏫 교사로 접속 중</h3><p class="small">심야·수업 시간 잠금이 적용되지 않고 코인은 무제한이에요. 친구 방 탭에서 모든 학생의 방과 학습자료를 볼 수 있어요. 이 계정의 방은 시험용이라 평가기록부에 들어가지 않아요.</p></div>
-    <div class="card" id="t-approvals"><h3>✅ 승인 대기</h3><p class="muted small">불러오는 중...</p></div>
+    <div class="card" id="t-approvals"><h3>✅ 사진 액자 승인 대기</h3><p class="muted small">불러오는 중...</p></div>
     <div class="card" id="t-settings"><h3>⚙️ 설정</h3><p class="muted small">불러오는 중...</p></div>
     <div class="card" id="t-events"><h3>🎉 이벤트 관리</h3></div>
     <div class="card"><h3>📝 문항 · 🎟️ 쿠폰은 어디서?</h3><p class="small">형성평가 문항은 <b>학습하기 탭</b>에서 성취기준을 열면 형성평가 아래에 편집기가 나와요. 쿠폰은 <b>상점 탭</b> 위에 편집기가 있어요.</p></div>
@@ -754,25 +754,31 @@ function renderTEvents() {
   };
 }
 async function loadTApprovals() {
-  const box = $('#t-approvals'); if (!box) return;
+  const box = $('#t-approvals') || $('#t-coupon-approvals'); if (!box) return;
   try { const r = await API.call({ action: 'approvals' }); if (!r.ok) throw new Error(r.message || r.error); tAdmin.approvals = r.list || []; renderTApprovals(); }
   catch (e) { box.innerHTML = '<h3>✅ 승인 대기</h3><p class="muted small">불러오지 못했어요: ' + esc(e.message) + '</p>'; }
+  // 컨테이너 없는 쪽은 renderTApprovals 가 건너뜀
 }
 function renderTApprovals() {
-  const list = tAdmin.approvals || []; const box = $('#t-approvals'); if (!box) return;
-  box.innerHTML = `<h3>✅ 승인 대기 <small class="muted">${list.length}건 — 사진 액자 · 쿠폰</small></h3>` +
+  renderTApprovalList('#t-approvals', 'photo', '✅ 사진 액자 승인 대기', '📷 커스텀 사진 액자 — 승인하면 컬러로 전시돼요. 쿠폰 승인은 상점 탭에 있어요.');
+  renderTApprovalList('#t-coupon-approvals', 'coupon', '✅ 쿠폰 승인 대기', '학생이 코인으로 신청한 교실 쿠폰이에요. 승인하면 학생 상점에 "사용 가능"으로 표시돼요.');
+}
+function renderTApprovalList(sel, type, title, note) {
+  const box = $(sel); if (!box) return;
+  const list = (tAdmin.approvals || []).filter(a => a.type === type);
+  box.innerHTML = `<h3>${title} <small class="muted">${list.length}건</small></h3><p class="muted small">${esc(note)}</p>` +
     (list.length ? list.map(a => `<div class="approval">${a.type === 'photo' ? (a.img ? `<img src="${a.img}" style="filter:none;width:96px;height:64px">` : '<span class="muted small">사진 없음</span>') : '<span style="font-size:1.6rem">🎟️</span>'}
       <div style="flex:1"><b>${emojiFor(a.id)} ${esc(a.name)}</b> <small class="muted">${esc(a.id)} · ${esc(a.time)}</small><br><span class="small">${a.type === 'photo' ? '📷 커스텀 사진 액자' : esc(a.desc)}</span></div>
       <button class="btn primary tiny ta-ok" data-row="${a.row}">승인</button><button class="btn tiny danger ta-no" data-row="${a.row}">거절</button></div>`).join('') +
-      `<div class="btn-row"><button class="btn accent" id="ta-all">모두 승인 (${list.length})</button><button class="btn ghost" id="ta-refresh">새로 고침</button></div>` : '<p class="muted small">대기 중인 요청이 없어요.</p><div class="btn-row"><button class="btn ghost" id="ta-refresh">새로 고침</button></div>');
+      `<div class="btn-row"><button class="btn accent ta-all">모두 승인 (${list.length})</button><button class="btn ghost ta-refresh">새로 고침</button></div>` : '<p class="muted small">대기 중인 요청이 없어요.</p><div class="btn-row"><button class="btn ghost ta-refresh">새로 고침</button></div>');
   const act = async (rows, decision) => {
     const r = await API.call({ action: 'approve', rows, decision }).catch(() => ({ ok: false, message: '연결 실패' }));
     if (r.ok) { tAdmin.approvals = r.list || []; renderTApprovals(); toast(decision === 'reject' ? '거절했어요' : '승인했어요. 학생 화면에 바로 반영돼요', 'ok'); } else toast(r.message || '실패했어요', 'bad');
   };
-  $$('.ta-ok').forEach(b => b.onclick = () => act([+b.dataset.row], 'approve'));
-  $$('.ta-no').forEach(b => b.onclick = () => { if (confirm('거절할까요? 사진은 지워지고 쿠폰 코인은 돌려줘요.')) act([+b.dataset.row], 'reject'); });
-  const all = $('#ta-all'); if (all) all.onclick = () => act(list.map(a => a.row), 'approve');
-  $('#ta-refresh').onclick = loadTApprovals;
+  box.querySelectorAll('.ta-ok').forEach(b => b.onclick = () => act([+b.dataset.row], 'approve'));
+  box.querySelectorAll('.ta-no').forEach(b => b.onclick = () => { if (confirm(type === 'photo' ? '거절할까요? 사진은 지워지고 학생이 다시 올릴 수 있어요.' : '거절할까요? 쿠폰 코인은 학생에게 돌려줘요.')) act([+b.dataset.row], 'reject'); });
+  const all = box.querySelector('.ta-all'); if (all) all.onclick = () => act(list.map(a => a.row), 'approve');
+  box.querySelectorAll('.ta-refresh').forEach(b => b.onclick = loadTApprovals);
 }
 function renderTSettings() {
   const s = tAdmin.settings;
