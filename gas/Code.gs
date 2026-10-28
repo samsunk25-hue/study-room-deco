@@ -124,6 +124,8 @@ function seedTest_(acc, body, today) {
     const hits = u.keyConcepts.slice(0, 4).map(c => c.term);
     st.records.push({ date, topicId: u.id, unitId: u.unitId, attempts: 1, quizRewarded: true, passRewarded: true, opened: hits, quiz: { correct: 2, total: 2 },
       summary: '[테스트 자료] ' + hits.join(', ') + ' 개념을 연결해 설명한 요약이에요.', score: 85, pass: true, hits, reason: 'ok', reward: { coins: 90, itemId: null } });
+    const itemId = Engine.rollItem(st, today, Math.random, loadEvents_());          // 통과 보상 가구도 함께
+    Engine.addItem(st, u.unitId, itemId, today); st.records[st.records.length - 1].reward.itemId = itemId; st.coins += 90;
     added++;
   });
   saveState_(sacc, st); cache_().remove('allsum');

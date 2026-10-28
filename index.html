@@ -7,7 +7,7 @@
 <meta http-equiv="Content-Security-Policy" content="connect-src https://script.google.com https://script.googleusercontent.com; form-action 'none'; object-src 'none'; base-uri 'none'">
 <meta name="referrer" content="no-referrer">
 <title>스터디룸 — 학습 정리하고 내 방 꾸미기</title>
-<link rel="stylesheet" href="css/style.css?v=202610281056">
+<link rel="stylesheet" href="css/style.css?v=202610281103">
 </head>
 <body>
 
@@ -37,8 +37,8 @@
     <div class="room-layout">
       <div class="room-wrap">
         <div id="lock-banner" class="banner hidden">🔒 수업 시간에는 인테리어가 잠겨요. 지금은 학습하기만 할 수 있어요.</div>
-        <canvas id="room-canvas" width="820" height="600"></canvas>
-        <div class="room-hint">가구를 끌어서 옮기고, 선택한 뒤 <b>R</b> 키로 회전할 수 있어요. 단원마다 방이 따로 있어요.</div>
+        <canvas id="room-canvas" width="820" height="640"></canvas>
+        <div class="room-hint" id="room-hint">가구를 끌어서 옮기고, 선택한 뒤 <b>R</b> 키로 회전할 수 있어요. <b>벽을 클릭</b>하면 그 벽을 크게 볼 수 있어요.</div>
       </div>
       <aside id="room-panel" class="panel">
         <div id="inbox-card" class="card inbox hidden"></div>
@@ -111,12 +111,12 @@
 
 <div id="toast"></div>
 
-<script src="js/catalog.js?v=202610281056"></script>
-<script src="js/units.js?v=202610281056"></script>
-<script src="js/judge.js?v=202610281056"></script>
-<script src="js/engine.js?v=202610281056"></script>
-<script src="js/api.js?v=202610281056"></script>
-<script src="js/room.js?v=202610281056"></script>
-<script src="js/app.js?v=202610281056"></script>
+<script src="js/catalog.js?v=202610281103"></script>
+<script src="js/units.js?v=202610281103"></script>
+<script src="js/judge.js?v=202610281103"></script>
+<script src="js/engine.js?v=202610281103"></script>
+<script src="js/api.js?v=202610281103"></script>
+<script src="js/room.js?v=202610281103"></script>
+<script src="js/app.js?v=202610281103"></script>
 </body>
 </html>

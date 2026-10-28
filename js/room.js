@@ -7,7 +7,9 @@ function createRoom(cv, roomGetter, hk) {
   const N = 8;            // 타일 수 (N x N)
   const TW = 64, TH = 32; // 타일 가로/세로(px)
   const WALL_H = 150;
-  const S = 1.4;            // 화면 확대 배율 (방이 캔버스를 더 채우도록)
+  const S = 1.55;           // 화면 확대 배율 (방이 캔버스를 꽉 채우도록)
+  let view = { mode: 'iso', wall: 'R' };   // 'iso' 전체 방 / 'wall' 벽 정면 보기
+  let wallK = 1, wallLeft = 0, wallBase = 0; // 벽 보기 배치값 (renderWall 에서 계산)
 
   let canvas, ctx, ox, oy, getRoom, hooks;
   let selected = null;     // 선택된 아이템 uid
@@ -72,6 +74,13 @@ function createRoom(cv, roomGetter, hk) {
   function wallPanel(side, pos, zBottom, wT, hPx, drawFn) {
     const Wpx = wT * TW / 2;
     let o;
+    if (view.mode === 'wall') {                       // 벽 정면 보기: 기울임 없이 확대
+      if (side !== view.wall) return;
+      const x0 = wallLeft + pos * (TW / 2) * wallK, y0 = wallBase - (zBottom + hPx) * wallK;
+      ctx.save(); ctx.setTransform(S * wallK, 0, 0, S * wallK, x0 * S, y0 * S); drawFn(Wpx, hPx); ctx.restore();
+      track({ x: x0, y: y0 }); track({ x: x0 + Wpx * wallK, y: y0 + hPx * wallK });
+      return;
+    }
     ctx.save();
     if (side === 'R') { o = P(pos, -0.03, zBottom + hPx); ctx.setTransform(S, 0.5 * S, 0, S, o.x * S, o.y * S); }
     else { o = P(-0.03, pos + wT, zBottom + hPx); ctx.setTransform(S, -0.5 * S, 0, S, o.x * S, o.y * S); }
@@ -333,6 +342,47 @@ function createRoom(cv, roomGetter, hk) {
   }
 
   /* ---------- 렌더 ---------- */
+  function drawWindow() {
+    wallPanel('R', 4.6, 70, 2.2, 56, (W, H) => { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H); ctx.fillStyle = '#bfe3ff'; ctx.fillRect(4, 4, W - 8, H - 8); ctx.fillStyle = '#fff'; ctx.fillRect(W / 2 - 1.5, 4, 3, H - 8); ctx.fillRect(4, H / 2 - 1.5, W - 8, 3); ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.beginPath(); ctx.arc(W * 0.72, H * 0.35, 6, 0, 7); ctx.fill(); });
+  }
+  /* 벽 정면 보기: 선택한 벽(L/R)을 크게, 벽걸이 가구를 좌우로 옮길 수 있음 */
+  function renderWall(r0) {
+    const W = canvas.width / S, H = canvas.height / S;
+    const top = 28, baseY = H - 46;
+    wallK = Math.min(((W - 60) / N) / (TW / 2), (baseY - top) / WALL_H);
+    const wallWidth = N * (TW / 2) * wallK;
+    wallLeft = (W - wallWidth) / 2; wallBase = baseY;
+    const wall = r0.wall, floor = r0.floor;
+    ctx.fillStyle = view.wall === 'R' ? wall : shade(wall, -0.06);
+    ctx.fillRect(wallLeft, baseY - WALL_H * wallK, wallWidth, WALL_H * wallK);
+    ctx.strokeStyle = shade(wall, -0.3); ctx.lineWidth = 1; ctx.strokeRect(wallLeft, baseY - WALL_H * wallK, wallWidth, WALL_H * wallK);
+    ctx.fillStyle = shade(wall, -0.22); ctx.fillRect(wallLeft, baseY - 8 * wallK, wallWidth, 8 * wallK);           // 걸레받이
+    ctx.fillStyle = floor; ctx.fillRect(wallLeft - 10, baseY, wallWidth + 20, H - baseY - 6);                       // 바닥 띠
+    ctx.fillStyle = shade(floor, -0.15); ctx.fillRect(wallLeft - 10, baseY, wallWidth + 20, 1.5);
+    ctx.fillStyle = '#7b7786'; ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText(view.wall === 'R' ? '오른쪽 벽 (창문 쪽)' : '왼쪽 벽', wallLeft, top - 10);
+    if (view.wall === 'R') drawWindow();
+    const items = placedItems().filter(it => ITEMS[it.id].wall && it.side === view.wall).sort((a, b) => a.pos - b.pos);
+    for (const it of items) {
+      const def = ITEMS[it.id];
+      const c = (PALETTE[it.color] || PALETTE.wood).hex, a = (STYLES[it.style] || STYLES.basic).accent;
+      bb = { x0: 1e9, y0: 1e9, x1: -1e9, y1: -1e9 };
+      ctx.globalAlpha = drag && drag.uid === it.uid ? 0.75 : 1;
+      drawWallItem(it, def, c, a);
+      ctx.globalAlpha = 1;
+      if (selected === it.uid) { ctx.save(); ctx.setLineDash([5, 4]); ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2; ctx.strokeRect(bb.x0 - 4, bb.y0 - 4, bb.x1 - bb.x0 + 8, bb.y1 - bb.y0 + 8); ctx.restore(); }
+      bboxes.push({ uid: it.uid, ...bb }); bb = null;
+    }
+    if (!items.length) { ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.font = '14px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('이 벽에는 아직 걸린 것이 없어요. 보관함의 액자·포스터·시계를 방에 놓고 끌어 보세요.', W / 2, (top + baseY) / 2); ctx.textAlign = 'left'; }
+  }
+  function pointInPoly(x, y, pts) {
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const xi = pts[i].x, yi = pts[i].y, xj = pts[j].x, yj = pts[j].y;
+      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
+    }
+    return inside;
+  }
   function render() {
     const r0 = getRoom();
     t = performance.now();
@@ -340,6 +390,7 @@ function createRoom(cv, roomGetter, hk) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.setTransform(S, 0, 0, S, 0, 0);
     bboxes = []; bb = null;
+    if (view.mode === 'wall') { renderWall(r0); return; }
 
     // 벽
     const wall = r0.wall, floor = r0.floor;
@@ -349,7 +400,7 @@ function createRoom(cv, roomGetter, hk) {
     poly([P(0, N, 8), P(0, 0, 8), P(0, 0, 0), P(0, N, 0)], shade(wall, -0.25));
     poly([P(0, 0, 8), P(N, 0, 8), P(N, 0, 0), P(0, 0, 0)], shade(wall, -0.2));
     // 창문 (오른쪽 벽)
-    wallPanel('R', 4.6, 70, 2.2, 56, (W, H) => { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H); ctx.fillStyle = '#bfe3ff'; ctx.fillRect(4, 4, W - 8, H - 8); ctx.fillStyle = '#fff'; ctx.fillRect(W / 2 - 1.5, 4, 3, H - 8); ctx.fillRect(4, H / 2 - 1.5, W - 8, 3); ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.beginPath(); ctx.arc(W * 0.72, H * 0.35, 6, 0, 7); ctx.fill(); });
+    drawWindow();
 
     // 바닥
     for (let x = 0; x < N; x++) for (let y = 0; y < N; y++) {
@@ -427,6 +478,10 @@ function createRoom(cv, roomGetter, hk) {
       for (let i = bboxes.length - 1; i >= 0; i--) { const b = bboxes[i]; if (sx >= b.x0 && sx <= b.x1 && sy >= b.y0 && sy <= b.y1) { hit = b.uid; break; } }
       selected = hit;
       hooks.onSelect && hooks.onSelect(hit);
+      if (!hit && view.mode === 'iso' && hooks.onWallClick) {
+        if (pointInPoly(sx, sy, [P(0, 0, WALL_H), P(0, N, WALL_H), P(0, N, 0), P(0, 0, 0)])) { hooks.onWallClick('L'); e.preventDefault(); return; }
+        if (pointInPoly(sx, sy, [P(0, 0, WALL_H), P(N, 0, WALL_H), P(N, 0, 0), P(0, 0, 0)])) { hooks.onWallClick('R'); e.preventDefault(); return; }
+      }
       if (hit) {
         const it = getRoom().inventory.find(i => i.uid === hit);
         const tl = tileAt(sx, sy);
@@ -442,7 +497,9 @@ function createRoom(cv, roomGetter, hk) {
       drag.moved = true;
       const it = getRoom().inventory.find(i => i.uid === drag.uid);
       const def = ITEMS[it.id];
-      if (def.wall) {
+      if (def.wall && view.mode === 'wall') {
+        it.pos = Math.max(0, Math.min(N - def.w, Math.floor((sx - wallLeft) / ((TW / 2) * wallK))));
+      } else if (def.wall) {
         it.side = sx >= ox ? 'R' : 'L';
         it.pos = Math.max(0, Math.min(N - def.w, Math.floor(Math.abs(sx - ox) / (TW / 2))));
       } else {
@@ -469,7 +526,7 @@ function createRoom(cv, roomGetter, hk) {
   /* ---------- 공개 API ---------- */
   function init() {
     canvas = cv; ctx = cv.getContext('2d'); getRoom = roomGetter; hooks = hk || {};
-    ox = cv.width / 2 / S; oy = 160;
+    ox = cv.width / 2 / S; oy = WALL_H + 4;
     bind();
     requestAnimationFrame(loop);
   }
@@ -495,6 +552,9 @@ function createRoom(cv, roomGetter, hk) {
   function snapshot() { return canvas.toDataURL('image/png'); }
 
   function clearSelection() { selected = null; drag = null; }
+  function setView(mode, wall) { view = { mode: mode === 'wall' ? 'wall' : 'iso', wall: wall === 'L' ? 'L' : (wall === 'R' ? 'R' : view.wall) }; drag = null; }
+  function getView() { return Object.assign({}, view); }
+  function toggleWall() { view.wall = view.wall === 'R' ? 'L' : 'R'; }
   init();
-  return { select, getSelected, clearSelection, place, unplace, rotate, isValid, findFreeSpot, randomFreeTile, checkSynergies, purifyEffect, snapshot, footprint, N };
+  return { select, getSelected, clearSelection, setView, getView, toggleWall, place, unplace, rotate, isValid, findFreeSpot, randomFreeTile, checkSynergies, purifyEffect, snapshot, footprint, N };
 }

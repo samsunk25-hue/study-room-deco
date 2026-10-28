@@ -31,6 +31,8 @@ const CONFIG = {
   recolorCost: 20,
   restyleCost: 30,
   wallpaperCost: 50,
+  // 상점 가구 구매 가격(희귀도별). 이벤트 한정 가구는 구매 불가
+  shopPrice: { common: 80, rare: 160, epic: 320 },
   conceptMapThreshold: 4,   // 한 달 동안 통과 횟수 → AI 개념도 액자 1회 지급
 
   // 지역 연계 이벤트 (기간 중 퀴즈 통과 시 한정판 가구 드롭)

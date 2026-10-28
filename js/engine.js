@@ -226,6 +226,15 @@ const Engine = (() => {
         const it = addItem(state, cmd.unitId, 'photo_frame', ctx.today);
         return { ok: true, result: { uid: it.uid } };
       }
+      case 'buyItem': {   // 상점에서 가구 구매 → 현재 단원 방 보관함
+        const def = ITEMS[cmd.itemId];
+        if (!def || def.pool !== 'box') return fail('상점에서 살 수 없는 가구예요');
+        if (!cmd.unitId) return fail('방을 먼저 골라 주세요');
+        const price = (CONFIG.shopPrice || { common: 80, rare: 160, epic: 320 })[def.rarity] || 100;
+        if (!spend(price)) return fail(`코인이 부족해요 (🪙 ${price} 필요)`);
+        const it = addItem(state, cmd.unitId, cmd.itemId, ctx.today);
+        return { ok: true, result: { uid: it.uid, price } };
+      }
       case 'buyCoupon': {
         const cp = (ctx.coupons || CONFIG.coupons).find(c => c.id === cmd.id); if (!cp) return fail('없는 쿠폰이에요');
         if (!spend(cp.cost)) return fail(`코인이 부족해요 (🪙 ${cp.cost} 필요)`);
