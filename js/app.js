@@ -241,7 +241,8 @@ function renderRoom() {
     const here = isTeacher() ? onlineList.filter(st => st.where === id).length : 0;
     return `<button class="room-tab ${id === currentRoomId ? 'on' : ''}" data-id="${esc(id)}">${esc(u ? u.subject + ' · ' : '')}${esc(unitTitle(id))} ${isTeacher() ? `<b>👥 ${here}</b> <small>· 시작 ${unitStats.stats[id] || 0}명</small>` : `<small>${n}개</small>`}${r && r.monster ? ' 👾' : ''}</button>`;
   }).join('');
-  $$('.room-tab').forEach(b => b.onclick = () => { currentRoomId = b.dataset.id; myRoom.clearSelection(); renderRoom(); });
+  $('.room-tab').forEach(b => b.onclick = () => { currentRoomId = b.dataset.id; myRoom.clearSelection(); renderRoom(); });
+  const on = $('.room-tab.on'); if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'center' });   // 가로 스크롤 탭에서 선택 탭이 보이게
   renderRoomPanel();
 }
 function layoutOf(room) { return room.inventory.map(i => ({ uid: i.uid, placed: !!i.placed, x: i.x, y: i.y, rot: i.rot || 0, side: i.side, pos: i.pos })); }

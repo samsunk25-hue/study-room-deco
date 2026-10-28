@@ -256,3 +256,27 @@ table.sheet th { background: #f6f3ee; }
 /* 교사 접속 중: 내 방의 꾸미기 패널은 숨김 (학생 활동 현황판만 표시) */
 body.teacher #inv-card, body.teacher #deco-card, body.teacher #privacy-card, body.teacher #selected-tools,
 body.teacher #monster-card, body.teacher #synergy-list, body.teacher #inbox-card { display: none !important; }
+
+/* ---------- PC·태블릿 가로 모드 최적화 ---------- */
+/* 단원 탭: 한 줄 가로 스크롤 (세로 공간 절약, 손가락으로 밀어서 넘김) */
+.room-tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; padding-bottom: 6px; scroll-snap-type: x proximity; }
+.room-tab { flex: 0 0 auto; white-space: nowrap; scroll-snap-align: start; }
+/* 태블릿 가로(1024~1366px): 캔버스와 패널을 나란히, 패널은 조금 좁게 */
+@media (min-width: 901px) and (max-width: 1180px) {
+  main { padding: 12px; }
+  .room-layout { grid-template-columns: minmax(0, 1fr) 290px; gap: 12px; }
+  .card { padding: 12px 14px; }
+  .tab { padding: 8px 10px; font-size: 0.9rem; }
+}
+/* 큰 PC 화면: 더 넓게 */
+@media (min-width: 1400px) {
+  main { max-width: 1440px; }
+  .room-layout { grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; }
+  .study, .library, .shop, .teacher, .friends { max-width: 960px; }
+}
+/* 세로가 짧은 가로 화면(태블릿 가로): 상단 바를 얇게, 캔버스가 한 화면에 들어오도록 */
+@media (max-height: 820px) and (min-width: 901px) {
+  .topbar { padding: 6px 14px; }
+  .room-hint { margin-top: 4px; font-size: 0.8rem; }
+  #room-canvas { max-height: calc(100vh - 230px); width: auto; max-width: 100%; margin: 0 auto; }
+}
