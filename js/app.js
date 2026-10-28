@@ -326,13 +326,19 @@ function photoConsentModal(frame) {
       <label><input type="checkbox" class="ck"> <span><b>저작권</b>: 내가 직접 찍었거나 사용해도 된다고 허락받은 사진이에요. (연예인·게임·만화 캡처는 안 돼요)</span></label>
       <label><input type="checkbox" class="ck"> <span>친구들에게 보여도 괜찮은, 학교에서 쓰기에 적절한 사진이에요.</span></label>
     </div>
-    <input type="file" id="photo-file" accept="image/*" disabled>
+    <p class="small" id="photo-guide" style="margin:10px 0 6px;color:#b45309"><b>위 4가지에 모두 체크하면</b> 사진을 고를 수 있어요. (0/4)</p>
+    <input type="file" id="photo-file" accept="image/*">
     <div class="btn-row"><button class="btn ghost" id="photo-cancel">취소</button></div>`);
   const file = $('#photo-file');
-  $$('#modal-body .ck').forEach(c => c.onchange = () => { file.disabled = !$$('#modal-body .ck').every(x => x.checked); });
+  const allChecked = () => $$('#modal-body .ck').every(x => x.checked);
+  const updateGuide = () => { const n = $$('#modal-body .ck').filter(x => x.checked).length; const g = $('#photo-guide'); if (!g) return; g.innerHTML = n === 4 ? '✅ 확인 완료! 아래에서 사진 파일을 고르세요.' : `<b>위 4가지에 모두 체크하면</b> 사진을 고를 수 있어요. (${n}/4)`; g.style.color = n === 4 ? '#166534' : '#b45309'; };
+  $$('#modal-body .ck').forEach(c => c.onchange = updateGuide);
   $('#photo-cancel').onclick = closeModal;
+  file.onclick = e => { if (!allChecked()) { e.preventDefault(); toast('먼저 위 4가지 확인 항목에 모두 체크해 주세요', 'bad'); } };
   file.onchange = () => {
     const f = file.files[0]; if (!f) return;
+    if (!allChecked()) { file.value = ''; return toast('먼저 위 4가지 확인 항목에 모두 체크해 주세요', 'bad'); }
+    if (!/^image\//.test(f.type)) { file.value = ''; return toast('이미지 파일(jpg, png 등)만 올릴 수 있어요', 'bad'); }
     const rd = new FileReader();
     rd.onload = () => {
       const im = new Image();
