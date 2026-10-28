@@ -38,6 +38,10 @@ function toast(msg, type = '') {
   const el = $('#toast'); el.textContent = msg; el.className = 'show ' + type;
   clearTimeout(toastTimer); toastTimer = setTimeout(() => el.className = '', 2800);
 }
+function showImageModal(src, title, pending) {
+  modal(`<h2>🖼️ ${esc(title || '')}</h2>${pending ? '<div class="notice">선생님 승인 전이라 흑백으로 전시돼요.</div>' : ''}<img src="${src}" alt="${esc(title || '')}" style="width:100%;border-radius:12px;border:1px solid var(--line);image-rendering:auto"><div class="btn-row"><button class="btn" id="img-close">닫기</button></div>`);
+  $('#img-close').onclick = closeModal;
+}
 function modal(html) { $('#modal-body').innerHTML = html; $('#overlay-modal').classList.remove('hidden'); }
 function closeModal() { $('#overlay-modal').classList.add('hidden'); }
 function updateHeader() {
@@ -281,7 +285,7 @@ function renderRoomPanel() {
     const def = ITEMS[sel.id];
     tools.innerHTML = `
       <h3>${def.emoji} ${esc(def.name)} <small>${RARITY[def.rarity].name}</small></h3>
-      <div class="btn-row">${def.wall ? '' : '<button class="btn" id="btn-rotate">🔄 회전</button>'}<button class="btn" id="btn-unplace">📦 보관함으로</button></div>
+      <div class="btn-row">${def.wall ? '' : '<button class="btn" id="btn-rotate">🔄 회전</button>'}<button class="btn" id="btn-unplace">📦 보관함으로</button>${sel.img ? '<button class="btn accent" id="btn-view-img">🔍 크게 보기</button>' : ''}</div>
       <div class="row-label">색상 리폼 <small>(🪙 ${CONFIG.recolorCost})</small></div>
       <div class="swatches" id="color-swatches">${Object.entries(PALETTE).map(([k, p]) => `<div class="swatch ${sel.color === k ? 'on' : ''}" data-color="${k}" title="${p.name}" style="background:${p.hex}"></div>`).join('')}</div>
       <div class="row-label">스타일 <small>(🪙 ${CONFIG.restyleCost})</small></div>
@@ -290,6 +294,7 @@ function renderRoomPanel() {
         <p class="muted small">${sel.img ? (sel.approved ? '✅ 선생님 승인 완료 — 컬러로 전시 중' : '⏳ 선생님 승인 대기 중 — 흑백으로 표시돼요') : '아직 사진이 없어요. (월 1회)'}</p>
         ${sel.img ? '' : '<button class="btn accent" id="btn-photo">📷 사진 올리기</button>'}` : ''}`;
     const rot = $('#btn-rotate'); if (rot) rot.onclick = () => { if (myRoom.rotate(sel)) afterRoomChange(); else toast('그 방향으로는 공간이 부족해요', 'bad'); };
+    const vi = $('#btn-view-img'); if (vi) vi.onclick = () => showImageModal(sel.img, def.name, sel.id === 'photo_frame' && !sel.approved);
     $('#btn-unplace').onclick = () => { myRoom.unplace(sel); afterRoomChange(); };
     $$('#color-swatches .swatch').forEach(s => s.onclick = async () => {
       const r = await dispatch({ type: 'restyle', unitId: currentRoomId, uid: sel.uid, color: s.dataset.color });
@@ -571,7 +576,7 @@ function renderLibrary() {
     <div class="card"><h2>📚 나의 서재</h2>
       <p class="muted small">내가 쓴 요약이 쌓이는 곳이에요. 통과한 요약만 <b>학습자료</b>로 친구에게 보여요. 점수·시도 횟수는 나와 선생님만 볼 수 있어요.</p>
       <div class="row-label">🧠 AI 개념도 액자 <small class="muted">— 한 단원의 성취기준을 모두 통과하면 그 단원의 개념도 액자를 받아요</small></div>
-      ${started.length ? started.map(p => `<div style="margin:6px 0"><div class="small"><b>${esc(p.unit.title)}</b> · 통과 ${p.passed}/${p.total} ${state.conceptMaps[p.unit.id] ? '<span class="tag pass">액자 받음 ✅</span>' : (p.passed >= p.total ? '<span class="tag best">완성!</span>' : '')}</div><div class="progress"><div style="width:${Math.round(p.passed / p.total * 100)}%"></div></div></div>`).join('') : '<p class="muted small">아직 통과한 성취기준이 없어요. 학습하기에서 시작해 보세요.</p>'}
+      ${started.length ? started.map(p => `<div style="margin:6px 0"><div class="small"><b>${esc(p.unit.title)}</b> · 통과 ${p.passed}/${p.total} ${state.conceptMaps[p.unit.id] ? '<span class="tag pass">액자 받음 ✅</span> <button class="link btn-view-concept" data-unit="' + esc(p.unit.id) + '">🔍 개념도 보기</button>' : (p.passed >= p.total ? '<span class="tag best">완성!</span>' : '')}</div><div class="progress"><div style="width:${Math.round(p.passed / p.total * 100)}%"></div></div></div>`).join('') : '<p class="muted small">아직 통과한 성취기준이 없어요. 학습하기에서 시작해 보세요.</p>'}
       ${ready.length ? `<div class="btn-row">${ready.map(p => `<button class="btn primary btn-concept" data-unit="${esc(p.unit.id)}">🧠 ${esc(p.unit.title)} 개념도 액자 만들기</button>`).join('')}</div>` : ''}
     </div>
     <div class="card">${recs.length ? recs.map(r => {
@@ -581,6 +586,7 @@ function renderLibrary() {
         ${r.pass && r.score >= 80 ? '<span class="tag best">⭐ 우수 요약</span>' : ''}${stickerCount[key] ? `<span class="tag best">✨ 영감 스티커 ${stickerCount[key]}</span>` : ''}</div><div class="text">${esc(r.summary)}</div></div>`;
     }).join('') : '<p class="muted">아직 요약이 없어요. 학습하기에서 첫 요약을 써 보세요!</p>'}</div>`;
   $$('.btn-concept').forEach(b => b.onclick = () => makeConceptFrame(b.dataset.unit));
+  $$('.btn-view-concept').forEach(b => b.onclick = () => { const r = state.rooms[b.dataset.unit]; const it = r && r.inventory.find(i => i.id === 'concept_frame' && i.img); if (it) showImageModal(it.img, unitTitle(b.dataset.unit) + ' 개념도'); else toast('개념도 액자를 찾을 수 없어요', 'bad'); });
 }
 async function makeConceptFrame(unitId) {
   const recs = Engine.unitProgress(state, topics, unitId).records;
