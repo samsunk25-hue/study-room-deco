@@ -14,11 +14,13 @@ const Judge = (() => {
     const total = unit.keyConcepts.length;
     const res = { pass: false, score: 0, hits: [], total, hint: '', feedback: '', reason: '' };
 
-    // 1) 길이
-    if (raw.length < CONFIG.minLength) {
+    // 1) 길이: 너무 짧거나 문장이 아니면 바로 반려. 짧아도 문장이면 핵심 개념은 채점한다(개념 열림·코인)
+    const short = raw.length < CONFIG.minLength;
+    const isSentence = raw.length >= 8 && (raw.match(/[가-힣]/g) || []).length >= 5;
+    if (short && !isSentence) {
       res.reason = 'too_short';
       res.feedback = '조금 더 자세히!';
-      res.hint = `최소 ${CONFIG.minLength}자 이상 써 보세요. 오늘 배운 개념이 "왜", "어떻게" 연결되는지 설명하면 좋아요.`;
+      res.hint = `문장으로 ${CONFIG.minLength}자 이상 써 보세요. 오늘 배운 개념이 "왜", "어떻게" 연결되는지 설명하면 좋아요.`;
       return res;
     }
 
@@ -72,6 +74,12 @@ const Judge = (() => {
       res.reason = 'missing';
       res.feedback = `핵심 개념이 ${res.hits.length}/${total}개 보여요. ${need}개 이상 필요해요.`;
       res.hint = missing[0].hint;
+      return res;
+    }
+    if (short) {   // 개념은 충분하지만 글이 짧음 → 개념 열림은 인정, 통과는 보류
+      res.reason = 'too_short';
+      res.feedback = `핵심 개념 ${res.hits.length}/${total}개를 잘 찾았어요! 글이 조금 짧아요.`;
+      res.hint = `${CONFIG.minLength}자 이상으로 늘려 보세요. 개념들이 "왜", "어떻게" 연결되는지 한 문장만 더 붙이면 통과예요.`;
       return res;
     }
     if (!causal) {
