@@ -239,7 +239,7 @@ function renderRoom() {
   $('#room-tabs').innerHTML = roomIds().map(id => {
     const r = state.rooms[id]; const n = r ? r.inventory.length : 0; const u = unitOf(id);
     const here = isTeacher() ? onlineList.filter(st => st.where === id).length : 0;
-    return `<button class="room-tab ${id === currentRoomId ? 'on' : ''}" data-id="${esc(id)}">${esc(u ? u.subject + ' · ' : '')}${esc(unitTitle(id))} ${isTeacher() ? (here ? `<b>👥 ${here}</b>` : '<small>0</small>') : `<small>${n}개</small>`}${r && r.monster ? ' 👾' : ''}</button>`;
+    return `<button class="room-tab ${id === currentRoomId ? 'on' : ''}" data-id="${esc(id)}">${esc(u ? u.subject + ' · ' : '')}${esc(unitTitle(id))} ${isTeacher() ? `<b>👥 ${here}</b> <small>· 시작 ${unitStats.stats[id] || 0}명</small>` : `<small>${n}개</small>`}${r && r.monster ? ' 👾' : ''}</button>`;
   }).join('');
   $$('.room-tab').forEach(b => b.onclick = () => { currentRoomId = b.dataset.id; myRoom.clearSelection(); renderRoom(); });
   renderRoomPanel();
@@ -255,7 +255,8 @@ function afterRoomChange() {
 function renderRoomPanel() {
   if (isTeacher()) {   // 교사: 꾸미기 패널 대신 학생 활동 현황
     ['#selected-tools', '#monster-card', '#synergy-list', '#inbox-card', '#inv-card', '#deco-card', '#privacy-card'].forEach(sel => { const el = $(sel); if (el) el.classList.add('hidden'); });
-    $('.room-hint').textContent = '단원 탭을 누르면 그 단원에서 활동 중인 학생이 보여요. 이름을 누르면 학생 방으로 들어가요.';
+    $('.room-hint').textContent = '탭의 👥는 지금 활동 중, 시작 n명은 그 단원 학습을 한 번이라도 한 학생 수예요. 이름을 누르면 학생 방으로 들어가요.';
+    pollUnitStats(false);
     renderOnlineCard();
     return;
   }
@@ -886,6 +887,11 @@ function renderTQList() {
 const STUDENT_EMOJIS = ['🐶', '🐱', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯', '🦁', '🐮', '🐷', '🐸', '🐵', '🐤', '🦄', '🐙', '🐢', '🦋', '🐬', '🦉'];
 function emojiFor(id) { let h = 0; for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return STUDENT_EMOJIS[h % STUDENT_EMOJIS.length]; }
 let onlineList = [];
+let unitStats = { stats: {}, at: 0 };   // 교사: 단원별 활동 시작 학생 수(누적)
+async function pollUnitStats(force) {
+  if (!isTeacher() || (!force && Date.now() - unitStats.at < 300000)) return;
+  try { const r = await API.call({ action: 'unitStats' }); if (r.ok) { unitStats = { stats: r.stats || {}, at: Date.now() }; if ($('#screen-room').classList.contains('active')) renderRoom(); } } catch (e) { /* ignore */ }
+}
 function renderOnlineCard() {
   if (!isTeacher()) return;
   let card = $('#online-card');
@@ -900,7 +906,8 @@ function renderOnlineCard() {
   $$('#online-card .online-chip').forEach(el => el.onclick = () => { showScreen('friends'); visitFriend(el.dataset.id); });
 }
 async function pollOnline() {
-  try { const r = await API.call({ action: 'online' }); if (r.ok) { onlineList = r.students || []; if ($('#screen-room').classList.contains('active')) renderRoom(); } } catch (e) { /* ignore */ }
+  try { const r = await API.call({ action: 'online' }); if (r.ok) { onlineList = r.students || []; if ($('#screen-room').classList.contains('active')) renderRoom(); }
+    pollUnitStats(false); } catch (e) { /* ignore */ }
 }
 function teacherVisitCard(v) {
   const recs = (v.records || []).slice().sort((a, b) => b.date.localeCompare(a.date));

@@ -620,6 +620,14 @@ function allSummaries_(acc) {
   try { cache_().put('allsum', JSON.stringify(out), 120); } catch (e) { /* 100KB 초과 시 캐시 생략 */ }
   return { ok: true, rows: out };
 }
+/* ---- 단원별 활동 시작 학생 수 (기록이 하나라도 있는 학생) — allSummaries 캐시 재사용 ---- */
+function unitStats_(acc) {
+  if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
+  const rows = allSummaries_(acc).rows || []; const sets = {};
+  rows.forEach(r => { (sets[r.unitId] = sets[r.unitId] || {})[r.id] = true; });
+  const stats = {}; Object.keys(sets).forEach(k => stats[k] = Object.keys(sets[k]).length);
+  return { ok: true, stats, students: new Set(rows.map(r => r.id)).size };
+}
 function inbox_(acc) {
   const now = Date.now(); const knocks = [], stickers = [];
   socialRows_().forEach(r => {
@@ -652,6 +660,7 @@ function doPost(e) {
     if (!acc.teacher) touchOnline_(acc, body.where);
     switch (a) {
       case 'online': return json_(online_(acc));                         // 교사 전용
+      case 'unitStats': return json_(unitStats_(acc));                   // 교사 전용
       case 'allSummaries': return json_(allSummaries_(acc));             // 교사 전용
       case 'load': return json_({ ok: true, state: loadState_(acc, true), units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), inbox: inbox_(acc) });
       case 'cmd': return json_(command_(acc, body.cmd, today));
