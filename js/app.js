@@ -131,8 +131,8 @@ function renderLogin(mode = 'login', msg = '') {
   if (MODE === 'local') {
     body.innerHTML = `<h2>🏠 스터디룸에 어서 오세요!</h2><p class="muted">오늘 배운 내용을 정리하면 코인과 가구를 받아 나만의 방을 꾸밀 수 있어요.</p>
       <div class="notice">로컬 모드예요. 기록은 이 브라우저에만 저장돼요. (서버 연동은 js/catalog.js 의 CONFIG.gasUrl)</div>
-      <label>학번 <input id="f-id" type="text" inputmode="numeric" placeholder="예: 0000" maxlength="10"></label>
-      <label>이름 <input id="f-name" type="text" placeholder="예: 홍길동" maxlength="10"></label>
+      <label>학번 <input id="f-id" type="text" inputmode="numeric" placeholder="예: 0000" maxlength="10" autocomplete="off" name="studyroom-sid"></label>
+      <label>이름 <input id="f-name" type="text" placeholder="예: 홍길동" maxlength="10" autocomplete="off" name="studyroom-name"></label>
       <button id="f-go" class="btn primary big">입장하기</button>`;
     $('#f-go').onclick = () => {
       const id = $('#f-id').value.trim(), name = $('#f-name').value.trim();
@@ -145,8 +145,8 @@ function renderLogin(mode = 'login', msg = '') {
   if (mode === 'login') {
     body.innerHTML = `<h2>🏠 스터디룸</h2><p class="muted">학번과 비밀번호로 들어와요. 다른 기기에서도 같은 방을 볼 수 있어요.</p>
       ${msg ? `<div class="notice">${esc(msg)}</div>` : ''}
-      <label>학번 <input id="f-id" type="text" inputmode="numeric" placeholder="예: 0000" maxlength="10"></label>
-      <label>비밀번호 <input id="f-pw" type="password" placeholder="비밀번호" maxlength="30"></label>
+      <label>학번 <input id="f-id" type="text" inputmode="numeric" placeholder="예: 0000" maxlength="10" autocomplete="off" name="studyroom-sid"></label>
+      <label>비밀번호 <input id="f-pw" type="password" placeholder="비밀번호" maxlength="30" autocomplete="new-password" name="studyroom-pw"></label>
       <button id="f-go" class="btn primary big">들어가기</button>
       <p class="small" style="margin-top:12px">처음이에요? <button class="link" id="f-reg">학번·비밀번호 만들기</button></p>
       <p class="muted small">비밀번호를 잊었으면 선생님께 초기화를 요청하세요.</p>
@@ -167,10 +167,10 @@ function renderLogin(mode = 'login', msg = '') {
   } else {
     body.innerHTML = `<h2>👋 처음 만들기</h2>
       <div class="notice">학번·이름·비밀번호와 학습 기록은 <b>선생님이 지정한 학교 폴더에만</b> 저장되고 외부로 전송되지 않아요. 비밀번호는 암호화되어 저장돼요.</div>
-      <label>학번 <input id="f-id" type="text" inputmode="numeric" placeholder="예: 0000" maxlength="10"></label>
-      <label>이름 <input id="f-name" type="text" placeholder="예: 홍길동" maxlength="10"></label>
-      <label>비밀번호 <input id="f-pw" type="password" placeholder="4자 이상" maxlength="30"></label>
-      <label>비밀번호 확인 <input id="f-pw2" type="password" maxlength="30"></label>
+      <label>학번 <input id="f-id" type="text" inputmode="numeric" placeholder="예: 0000" maxlength="10" autocomplete="off" name="studyroom-sid"></label>
+      <label>이름 <input id="f-name" type="text" placeholder="예: 홍길동" maxlength="10" autocomplete="off" name="studyroom-name"></label>
+      <label>비밀번호 <input id="f-pw" type="password" placeholder="4자 이상" maxlength="30" autocomplete="new-password" name="studyroom-pw"></label>
+      <label>비밀번호 확인 <input id="f-pw2" type="password" maxlength="30" autocomplete="new-password" name="studyroom-pw2"></label>
       <label>가입 코드 <input id="f-join" type="text" placeholder="선생님이 알려준 코드 (없으면 비워 두세요)" maxlength="40"></label>
       <button id="f-go" class="btn primary big">만들고 들어가기</button>
       <p class="small" style="margin-top:12px"><button class="link" id="f-back">← 이미 있어요</button></p>`;
