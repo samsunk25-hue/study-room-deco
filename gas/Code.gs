@@ -105,12 +105,14 @@ function teacherAccount_(email) {
   }
   return { id: 'T:' + e, row: 0, name: name + ' 선생님', fileId, privacy: 'private', teacher: true };
 }
-/** 교사 접속 코드(시트 메뉴 ⑧에서 발급한 서명 토큰)로 앱 로그인 — 시간 제한 없음 */
+/** 교사 접속 코드(시트 메뉴 ⑧에서 발급한 8자리 코드)로 앱 로그인 — 시간 제한 없음 */
 function teacherLogin_(body) {
-  const id = verifyToken_(String(body.code || '').trim());
-  if (!id || !id.startsWith('T:')) return fail_('bad_code', '교사 접속 코드가 올바르지 않거나 만료됐어요. 시트 메뉴 ⑧에서 다시 발급하세요');
-  const acc = account_(id); if (!acc) return fail_('not_teacher', '승인된 교사가 아니에요. 관리자에게 등록을 요청하세요');
-  return { ok: true, token: String(body.code).trim(), id: acc.id, name: acc.name, teacher: true, state: loadState_(acc, false), units: publicUnits_(loadUnits_()), inbox: { knocks: [], stickers: [] } };
+  const code = String(body.code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const raw = code && props_().getProperty('TCODE_' + code);
+  let info = null; try { info = raw ? JSON.parse(raw) : null; } catch (e) { info = null; }
+  if (!info || info.exp < Date.now()) return fail_('bad_code', '교사 접속 코드가 올바르지 않거나 만료됐어요. 시트 메뉴 ⑧에서 다시 발급하세요');
+  const acc = account_('T:' + info.email); if (!acc) return fail_('not_teacher', '승인된 교사가 아니에요. 관리자에게 등록을 요청하세요');
+  return { ok: true, token: makeToken_(acc.id), id: acc.id, name: acc.name, teacher: true, state: loadState_(acc, false), units: publicUnits_(loadUnits_()), inbox: { knocks: [], stickers: [] } };
 }
 
 function register_(body, today) {
@@ -521,9 +523,26 @@ function toggleNightLock() {
   alert_('심야 잠금: ' + (off ? '켜짐 (22:00~07:00 차단)' : '꺼짐 (테스트 모드)'));
 }
 function showTeacherCode() {
-  const email = requireTeacher_();
-  const code = makeToken_('T:' + String(email).toLowerCase());
-  alert_('교사 접속 코드 (30일 유효)\n\n' + code + '\n\n학생용 앱 로그인 화면에서 "교사로 접속"을 누르고 이 코드를 붙여 넣으세요.\n· 심야/수업 시간 잠금 없이 사용할 수 있어요.\n· 모든 학생의 방과 학습자료를 볼 수 있어요.\n· 코드는 본인 인증 수단이므로 다른 사람에게 알려주지 마세요.');
+  const email = String(requireTeacher_()).toLowerCase();
+  // 교사별 8자리 코드(30일). 이미 유효한 코드가 있으면 재사용
+  const key = 'TCODE_OF_' + email;
+  let code = props_().getProperty(key); let info = null;
+  if (code) { try { info = JSON.parse(props_().getProperty('TCODE_' + code) || 'null'); } catch (e) { info = null; } }
+  if (!info || info.exp < Date.now() || info.email !== email) {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; code = '';
+    for (let i = 0; i < 8; i++) code += chars.charAt(Math.floor(Math.random() * chars.length));
+    info = { email, exp: Date.now() + TOKEN_DAYS * 86400000 };
+    props_().setProperty('TCODE_' + code, JSON.stringify(info)); props_().setProperty(key, code);
+  }
+  const pretty = code.slice(0, 4) + '-' + code.slice(4);
+  const html = HtmlService.createHtmlOutput(
+    '<div style="font-family:sans-serif;padding:8px 4px">' +
+    '<p style="margin:0 0 8px">교사 접속 코드 (30일 유효, 본인만 사용)</p>' +
+    '<input id="c" value="' + pretty + '" readonly style="font-size:28px;letter-spacing:4px;text-align:center;width:100%;padding:10px;border:2px solid #f59e0b;border-radius:10px;font-weight:bold" onclick="this.select()">' +
+    '<p style="margin:10px 0 0;font-size:13px;color:#555">학생용 앱 로그인 화면 → <b>교사로 접속</b> → 이 코드를 입력하세요. (하이픈은 없어도 돼요)<br>심야·수업 시간 잠금 없이 쓸 수 있고 모든 학생 방을 볼 수 있어요.</p>' +
+    '<button onclick="var i=document.getElementById(\'c\');i.select();document.execCommand(\'copy\');this.textContent=\'복사됨!\'" style="margin-top:10px;padding:8px 14px;border:0;border-radius:8px;background:#f59e0b;color:#fff;font-weight:bold;cursor:pointer">복사</button>' +
+    '</div>').setWidth(420).setHeight(230);
+  SpreadsheetApp.getUi().showModalDialog(html, '👩‍🏫 교사 접속 코드');
 }
 function setJoinCode() {
   requireAdmin_();
