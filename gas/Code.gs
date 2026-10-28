@@ -576,12 +576,12 @@ function sticker_(acc, body, today) {
   return { ok: true, coins: state.coins, message: msg };
 }
 /* ---- 접속 중 학생 (교사 내 방에 표시): 학생 요청마다 캐시에 시각 기록, 최근 5분 이내를 접속 중으로 봄 ---- */
-function touchOnline_(acc) {
+function touchOnline_(acc, where) {
   try {
     const c = cache_(); const now = Date.now();
     const map = JSON.parse(c.get('online') || '{}');
-    map[acc.id] = now;
-    Object.keys(map).forEach(k => { if (now - map[k] > 600000) delete map[k]; });
+    map[acc.id] = { t: now, where: String(where || '').slice(0, 40) };
+    Object.keys(map).forEach(k => { const t = typeof map[k] === 'number' ? map[k] : map[k].t; if (now - t > 600000) delete map[k]; });
     c.put('online', JSON.stringify(map), 1200);
   } catch (e) { /* ignore */ }
 }
@@ -589,7 +589,8 @@ function online_(acc) {
   if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
   const now = Date.now(); const map = JSON.parse(cache_().get('online') || '{}');
   const names = {}; accountRows_().forEach(r => names[String(r[ACC.id])] = r[ACC.name]);
-  const students = Object.keys(map).filter(id => now - map[id] < 300000 && names[id]).sort().map(id => ({ id, name: names[id], seen: map[id] }));
+  const ent = id => (typeof map[id] === 'number' ? { t: map[id], where: '' } : map[id]);
+  const students = Object.keys(map).filter(id => now - ent(id).t < 300000 && names[id]).sort().map(id => ({ id, name: names[id], seen: ent(id).t, where: ent(id).where || '' }));
   return { ok: true, students };
 }
 /* ---- 전체 학생 학습 정리 (교사 서재) ---- */
@@ -638,7 +639,7 @@ function doPost(e) {
     if (a === 'login') return json_(login_(body, today));
     const id = tokenId; if (!id) return json_(fail_('auth', '다시 로그인해 주세요'));
     const acc = account_(id); if (!acc) return json_(fail_('auth', '계정을 찾을 수 없어요'));
-    if (!acc.teacher) touchOnline_(acc);
+    if (!acc.teacher) touchOnline_(acc, body.where);
     switch (a) {
       case 'online': return json_(online_(acc));                         // 교사 전용
       case 'allSummaries': return json_(allSummaries_(acc));             // 교사 전용

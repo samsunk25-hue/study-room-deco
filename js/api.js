@@ -30,7 +30,7 @@ const API = (() => {
     const t = ctrl && setTimeout(() => ctrl.abort(), timeout);
     try {
       // GAS 웹앱: text/plain 본문의 단순 요청만 CORS 없이 허용 (헤더 추가 금지)
-      const res = await fetch(CONFIG.gasUrl, { method: 'POST', body: JSON.stringify(Object.assign({ token: session && session.token }, payload)), redirect: 'follow', signal: ctrl && ctrl.signal });
+      const res = await fetch(CONFIG.gasUrl, { method: 'POST', body: JSON.stringify(Object.assign({ token: session && session.token, where: typeof whereNow === "function" ? whereNow() : "" }, payload)), redirect: 'follow', signal: ctrl && ctrl.signal });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       if (data && data.error === 'busy') { const e = new Error('busy'); e.retry = true; throw e; }

@@ -45,18 +45,18 @@
         <div id="selected-tools" class="card hidden"></div>
         <div id="monster-card" class="card monster hidden"></div>
         <div id="synergy-list" class="card hidden"></div>
-        <div class="card">
+        <div class="card" id="inv-card">
           <h3>📦 보관함 <small id="inv-count"></small></h3>
           <div id="inventory-list" class="inv-grid"></div>
         </div>
-        <div class="card">
+        <div class="card" id="deco-card">
           <h3>🎨 방 꾸미기</h3>
           <div class="row-label">벽지 <small>(🪙 <span class="wallpaper-cost"></span>)</small></div>
           <div id="wall-colors" class="swatches"></div>
           <div class="row-label">바닥 <small>(🪙 <span class="wallpaper-cost"></span>)</small></div>
           <div id="floor-colors" class="swatches"></div>
         </div>
-        <div class="card">
+        <div class="card" id="privacy-card">
           <h3>🚪 방 공개 설정</h3>
           <select id="privacy-select">
             <option value="open">🟢 항상 열어두기</option>

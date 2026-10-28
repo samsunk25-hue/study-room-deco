@@ -26,6 +26,8 @@ function monthKey() { return todayKey().slice(0, 7); }
 function shortDate(key) { return key.slice(5).replace('-', '/'); }
 function ctx() { return { topics, units, coupons, events, today: todayKey(), rng: Math.random }; }
 function unitOf(id) { return units.find(u => u.id === id); }
+/** 서버에 보내는 현재 위치: 학습 중이면 그 단원, 아니면 보고 있는 방 */
+function whereNow() { if (!state) return ''; const st = $('#screen-study'); if (st && st.classList.contains('active') && study.unit) return study.unit.id; return currentRoomId || ''; }
 function topicOf(id) { return topics.find(t => t.id === id); }
 function topicCode(id) { const t = topicOf(id); return t && t.code ? t.code : ''; }
 function setTopics(list) { topics = list || []; units = Engine.groupUnits(topics); }
@@ -235,7 +237,8 @@ function renderRoom() {
   if (!currentRoomId || !roomIds().includes(currentRoomId)) currentRoomId = roomIds()[0];
   $('#room-tabs').innerHTML = roomIds().map(id => {
     const r = state.rooms[id]; const n = r ? r.inventory.length : 0; const u = unitOf(id);
-    return `<button class="room-tab ${id === currentRoomId ? 'on' : ''}" data-id="${esc(id)}">${esc(u ? u.subject + ' · ' : '')}${esc(unitTitle(id))} <small>${n}개</small>${r && r.monster ? ' 👾' : ''}</button>`;
+    const here = isTeacher() ? onlineList.filter(st => st.where === id).length : 0;
+    return `<button class="room-tab ${id === currentRoomId ? 'on' : ''}" data-id="${esc(id)}">${esc(u ? u.subject + ' · ' : '')}${esc(unitTitle(id))} ${isTeacher() ? (here ? `<b>👥 ${here}</b>` : '<small>0</small>') : `<small>${n}개</small>`}${r && r.monster ? ' 👾' : ''}</button>`;
   }).join('');
   $$('.room-tab').forEach(b => b.onclick = () => { currentRoomId = b.dataset.id; myRoom.clearSelection(); renderRoom(); });
   renderRoomPanel();
@@ -249,6 +252,12 @@ function afterRoomChange() {
   renderRoomPanel();
 }
 function renderRoomPanel() {
+  if (isTeacher()) {   // 교사: 꾸미기 패널 대신 학생 활동 현황
+    ['#selected-tools', '#monster-card', '#synergy-list', '#inbox-card', '#inv-card', '#deco-card', '#privacy-card'].forEach(sel => { const el = $(sel); if (el) el.classList.add('hidden'); });
+    $('.room-hint').textContent = '단원 탭을 누르면 그 단원에서 활동 중인 학생이 보여요. 이름을 누르면 학생 방으로 들어가요.';
+    renderOnlineCard();
+    return;
+  }
   const room = currentRoom();
   const inv = room.inventory.filter(i => !i.placed);
   $('#inv-count').textContent = `${inv.length}개`;
@@ -879,11 +888,17 @@ function renderOnlineCard() {
   if (!isTeacher()) return;
   let card = $('#online-card');
   if (!card) { card = document.createElement('div'); card.id = 'online-card'; card.className = 'card'; card.style.background = '#ecfdf5'; $('#room-panel').insertBefore(card, $('#room-panel').firstChild); }
-  card.innerHTML = `<h3>🟢 지금 접속 중인 학생 <small class="muted">${onlineList.length}명 · 최근 5분</small></h3>` +
-    (onlineList.length ? `<div class="chips">${onlineList.map(s => `<span class="chip" style="font-size:1rem">${emojiFor(s.id)} ${esc(s.name)} <small class="muted">${esc(s.id)}</small></span>`).join('')}</div>` : '<p class="muted small">아직 접속한 학생이 없어요. 1분마다 새로 확인해요.</p>');
+  const here = onlineList.filter(st => st.where === currentRoomId), other = onlineList.filter(st => st.where !== currentRoomId);
+  const chip = st => `<span class="chip online-chip" data-id="${esc(st.id)}" style="font-size:1rem;cursor:pointer" title="방 방문">${emojiFor(st.id)} ${esc(st.name)} <small class="muted">${esc(st.id)}</small></span>`;
+  card.innerHTML = `<h3>🟢 ${esc(unitTitle(currentRoomId))}에서 활동 중 <small class="muted">${here.length}명 · 최근 5분</small></h3>` +
+    (here.length ? `<div class="chips">${here.map(chip).join('')}</div>` : '<p class="muted small">이 단원에서 활동 중인 학생이 없어요.</p>') +
+    `<div class="row-label" style="margin-top:10px">다른 단원·방 <small class="muted">${other.length}명</small></div>` +
+    (other.length ? `<div class="chips">${other.map(st => `<span class="chip online-chip" data-id="${esc(st.id)}" style="cursor:pointer">${emojiFor(st.id)} ${esc(st.name)} <small class="muted">${esc(unitTitle(st.where) || '?')}</small></span>`).join('')}</div>` : '<p class="muted small">없음</p>') +
+    `<p class="muted small" style="margin-top:8px">전체 접속 ${onlineList.length}명 · 1분마다 새로 확인해요. 이름을 누르면 그 학생 방에 들어가요.</p>`;
+  $$('#online-card .online-chip').forEach(el => el.onclick = () => { showScreen('friends'); visitFriend(el.dataset.id); });
 }
 async function pollOnline() {
-  try { const r = await API.call({ action: 'online' }); if (r.ok) { onlineList = r.students || []; if ($('#screen-room').classList.contains('active')) renderOnlineCard(); } } catch (e) { /* ignore */ }
+  try { const r = await API.call({ action: 'online' }); if (r.ok) { onlineList = r.students || []; if ($('#screen-room').classList.contains('active')) renderRoom(); } } catch (e) { /* ignore */ }
 }
 function teacherVisitCard(v) {
   const recs = (v.records || []).slice().sort((a, b) => b.date.localeCompare(a.date));
