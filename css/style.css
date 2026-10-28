@@ -259,8 +259,9 @@ body.teacher #monster-card, body.teacher #synergy-list, body.teacher #inbox-card
 
 /* ---------- PC·태블릿 가로 모드 최적화 ---------- */
 /* 단원 탭: 한 줄 가로 스크롤 (세로 공간 절약, 손가락으로 밀어서 넘김) */
-.room-tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; padding-bottom: 6px; scroll-snap-type: x proximity; }
-.room-tab { flex: 0 0 auto; white-space: nowrap; scroll-snap-align: start; }
+/* 단원 탭: 줄바꿈(스크롤바 없음), 중간 폭에서는 글자를 조금 작게 */
+.room-tab { white-space: nowrap; }
+@media (max-width: 1180px) { .room-tab { font-size: 0.78rem; padding: 5px 9px; } }
 /* 태블릿 가로(1024~1366px): 캔버스와 패널을 나란히, 패널은 조금 좁게 */
 @media (min-width: 901px) and (max-width: 1180px) {
   main { padding: 12px; }
