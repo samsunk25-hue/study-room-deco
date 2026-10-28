@@ -16,6 +16,8 @@ let events = Engine.defaultEvents();    // 서버 모드에서는 이벤트 시�
 let customItems = [];                     // 교사 정의 가구 (서버 아이템 시트)
 function applyItems(list) { if (!list) return; customItems = list; applyCustomItems(list.map(x => Object.assign({}, x, { pool: x.sell ? x.pool : (x.pool === 'box' ? 'box' : 'none'), enabled: x.enabled && (x.sell || x.pool === 'box') }))); }
 let serverSettings = { nightLockOff: false, classLock: Object.assign({}, CONFIG.classLock) };   // 교사가 앱에서 바꾸는 공개 설정
+let itemPrices = {};
+function applyItemPrices(m) { itemPrices = m || {}; Object.keys(ITEMS).forEach(id => { if (!ITEMS[id].custom) ITEMS[id].cost = itemPrices[id] > 0 ? Number(itemPrices[id]) : undefined; }); }
 function applyPricing(p) {   // 서버에서 받은 가격·보상을 CONFIG 에 반영 (표시와 즉시 적용 계산이 서버와 같아지도록)
   if (!p) return;
   CONFIG.shopPrice = { common: p.common, rare: p.rare, epic: p.epic };
@@ -102,7 +104,7 @@ async function dispatch(cmd, interactive = false) {
 async function reloadFromServer() {
   try {
     const r = await API.call({ action: 'load' });
-    if (r.ok) { if (r.units) setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) { serverSettings = r.settings; applyPricing(r.settings.prices); } if (r.items) applyItems(r.items); state = Engine.migrate(r.state, units); inbox = r.inbox || inbox; updateHeader(); checkLocks(); refreshCurrent(); }
+    if (r.ok) { if (r.units) setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) { serverSettings = r.settings; applyPricing(r.settings.prices); applyItemPrices(r.settings.itemPrices); } if (r.items) applyItems(r.items); state = Engine.migrate(r.state, units); inbox = r.inbox || inbox; updateHeader(); checkLocks(); refreshCurrent(); }
     else handleServerError(r);
   } catch (e) { /* 다음 기회에 */ }
 }
@@ -214,7 +216,7 @@ async function auth(action, payload) {
       return renderLogin(mode, msg);
     }
     API.setSession({ token: r.token, id: r.id || payload.id, name: r.name, teacher: !!r.teacher });
-    setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) { serverSettings = r.settings; applyPricing(r.settings.prices); } if (r.items) applyItems(r.items); state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
+    setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) { serverSettings = r.settings; applyPricing(r.settings.prices); applyItemPrices(r.settings.itemPrices); } if (r.items) applyItems(r.items); state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
     $('#overlay-login').classList.add('hidden');
     if (r.mustChange) changePasswordModal(true);
     start();
@@ -691,16 +693,19 @@ function renderShop() {
   const room = currentRoom(); const hasFrame = room.inventory.some(i => i.id === 'photo_frame');
   $('#shop-body').innerHTML = `
     <div class="card"><h2>🛒 상점</h2><p class="muted small">코인은 요약을 통과하면 받아요. 색상·스타일 리폼은 내 방에서 가구를 선택해 할 수 있어요. 구매한 액자는 <b>${esc(unitTitle(currentRoomId))}</b> 방에 들어가요.</p></div>
-    ${isTeacher() ? '<div class="card" id="t-photo-approvals" style="background:#eef6ff"><h3>✅ 사진 액자 승인 대기</h3><p class="muted small">불러오는 중...</p></div><div class="card" id="t-coupon-approvals" style="background:#eef6ff"><h3>✅ 쿠폰 승인 대기</h3><p class="muted small">불러오는 중...</p></div><div class="card" id="t-coupons" style="background:#eef6ff"></div><div class="card" id="t-items" style="background:#eef6ff"></div>' : ''}
+    ${isTeacher() ? '<div class="card" id="t-photo-approvals" style="background:#eef6ff"><h3>✅ 사진 액자 승인 대기</h3><p class="muted small">불러오는 중...</p></div><div class="card" id="t-coupon-approvals" style="background:#eef6ff"><h3>✅ 쿠폰 승인 대기</h3><p class="muted small">불러오는 중...</p></div><div class="card" id="t-coupons" style="background:#eef6ff"></div><div class="card" id="t-items" style="background:#eef6ff"></div><div class="card" id="t-prices" style="background:#eef6ff"></div>' : ''}
     <h3>🖼️ 특별 아이템</h3>
     <div class="shop-grid"><div class="card shop-item"><div class="emoji">📷</div><b>커스텀 사진 액자</b><p class="small muted">빈 액자를 사서 사진을 올려요. 개인정보·초상권·저작권 확인 후 올릴 수 있고, 선생님이 승인하면 컬러로 전시돼요. (월 1회)</p>
       <div class="price">🪙 ${ITEMS.photo_frame.cost}</div><button class="btn primary" id="buy-frame" ${hasFrame ? 'disabled' : ''}>${hasFrame ? '이 방에 보유 중' : '구매'}</button></div></div>
     <h3 style="margin-top:14px">🪑 가구 상점 <small class="muted">— 산 가구는 <b>${esc(unitTitle(currentRoomId))}</b> 방 보관함에 들어가요</small></h3>
-    <div class="shop-grid">${Object.keys(ITEMS).filter(k => (ITEMS[k].pool === 'box' || ITEMS[k].pool === 'shop') && k !== 'photo_frame').map(k => { const d = ITEMS[k], r = RARITY[d.rarity], p = d.cost > 0 ? d.cost : ((CONFIG.shopPrice || {})[d.rarity] || 100); return `<div class="card shop-item"><div class="emoji">${d.emoji}</div><b>${esc(d.name)}</b> <span class="rar small" style="color:${r.color}">${r.name}</span><div class="price">🪙 ${p}</div><button class="btn primary buy-item" data-id="${k}">구매</button></div>`; }).join('')}</div>
+    <div class="shop-grid">${Object.keys(ITEMS).filter(k => (ITEMS[k].pool === 'box' || ITEMS[k].pool === 'shop') && k !== 'photo_frame').map(k => { const d = ITEMS[k], r = RARITY[d.rarity], p = d.cost > 0 ? d.cost : ((CONFIG.shopPrice || {})[d.rarity] || 100); return `<div class="card shop-item"><div class="emoji">${d.emoji}</div><b>${esc(d.name)}</b> <span class="rar small" style="color:${r.color}">${r.name}</span><div class="price">🪙 ${p}</div>${isTeacher() && !d.custom ? `<label class="small" style="margin:4px 0">가격 <input type="number" min="0" class="item-price" data-id="${k}" value="${itemPrices[k] || ''}" placeholder="${(CONFIG.shopPrice || {})[d.rarity] || 100}" style="width:90px;padding:4px 6px"></label>` : ''}<button class="btn primary buy-item" data-id="${k}">구매</button></div>`; }).join('')}</div>${isTeacher() ? '<div class="btn-row"><button class="btn primary" id="save-item-prices">가구별 가격 저장</button><span class="muted small">비우면 희귀도 기본가로 돌아가요. 교사가 추가한 가구는 가구 추가 칸에서 가격을 정해요.</span></div>' : ''}
     <h3 style="margin-top:14px">🎟️ O2O 비밀 상점 <small class="muted">— 현실 교실 쿠폰 (선생님 승인 후 사용)</small></h3>
     <div class="shop-grid">${coupons.map(cp => `<div class="card shop-item"><div class="emoji">🎟️</div><b>${esc(cp.name)}</b><p class="small muted">${esc(cp.desc)}</p><div class="price">🪙 ${cp.cost}</div><button class="btn primary buy-coupon" data-id="${cp.id}">구매</button></div>`).join('')}</div>
     ${isTeacher() ? '' : `<div class="card" style="margin-top:14px"><h3>내 쿠폰</h3>${state.coupons.length ? state.coupons.map(c => `<div class="rec"><b>${esc(c.name)}</b> <span class="muted small">${shortDate(c.date)}</span> <span class="tag ${c.status === 'approved' ? 'pass' : (c.status === 'used' || c.status === 'rejected') ? 'fail' : 'best'}">${{ pending: '승인 대기', approved: '사용 가능', used: '사용 완료', rejected: '거절됨 (코인 환불)' }[c.status] || c.status}</span></div>`).join('') : '<p class="muted small">아직 쿠폰이 없어요.</p>'}</div>`}`;
-  if (isTeacher()) { tAdmin.coupons = coupons.map(c => Object.assign({}, c)); renderTCoupons(); tAdmin.items = customItems.map(x => Object.assign({}, x)); renderTItems(); loadTApprovals(); }
+  if (isTeacher()) {
+    tAdmin.coupons = coupons.map(c => Object.assign({}, c)); renderTCoupons(); tAdmin.items = customItems.map(x => Object.assign({}, x)); renderTItems(); loadTApprovals(); renderTPrices();
+    const sip = $('#save-item-prices'); if (sip) sip.onclick = async () => { const prices = {}; $$('.item-price').forEach(i => { if (i.value !== '') prices[i.dataset.id] = Number(i.value); }); const r = await API.call({ action: 'saveItemPrices', prices }).catch(() => ({ ok: false, message: '연결 실패' })); if (r.ok) { applyItemPrices(r.itemPrices); toast('가구별 가격을 저장했어요', 'ok'); renderShop(); } else toast(r.message || '실패했어요', 'bad'); };
+  }
   const bf = $('#buy-frame'); if (bf) bf.onclick = async () => { const r = await dispatch({ type: 'buyFrame', unitId: currentRoomId }, true); if (r.ok) { renderShop(); toast('빈 액자를 샀어요! 내 방 보관함에서 벽에 걸고 사진을 올려 보세요.', 'ok'); } };
   $('.buy-item').forEach(b => b.onclick = async () => { const r = await dispatch({ type: 'buyItem', unitId: currentRoomId, itemId: b.dataset.id }, true); if (r.ok) { toast(`${ITEMS[b.dataset.id].name}을(를) 샀어요! ${unitTitle(currentRoomId)} 방 보관함에서 놓을 수 있어요.`, 'ok'); renderShop(); } });
   $('.buy-coupon').forEach(b => b.onclick = async () => { const r = await dispatch({ type: 'buyCoupon', id: b.dataset.id }, true); if (r.ok) { renderShop(); toast('쿠폰을 신청했어요. 선생님 승인을 기다려요!', 'ok'); } });
@@ -761,6 +766,7 @@ async function renderTeacherServer(body) {
   body.innerHTML = `
     <div class="card" style="background:#eef6ff"><h3>👩‍🏫 교사로 접속 중</h3><p class="small">심야·수업 시간 잠금이 적용되지 않고 코인은 무제한이에요. 친구 방 탭에서 모든 학생의 방과 학습자료를 볼 수 있어요. 이 계정의 방은 시험용이라 평가기록부에 들어가지 않아요.</p></div>
     <div class="card" id="t-settings"><h3>⚙️ 설정</h3><p class="muted small">불러오는 중...</p></div>
+    <div class="card"><h3>🪙 코인 일괄 지급</h3><p class="muted small">전체 학생 또는 학번 목록에 코인을 한 번에 더해요. (학급 협동 미션 달성, 행사 보상 등)</p><div class="btn-row" style="align-items:flex-end"><label style="margin:0;width:120px">금액 <input type="number" id="t-grant-amt" min="1" max="10000" value="100"></label><label style="margin:0;flex:1;min-width:220px">대상 학번 <input type="text" id="t-grant-ids" placeholder="비우면 전체 학생 · 여러 명은 쉼표로 (예: 10301, 10302)" autocomplete="off"></label><button class="btn primary" id="t-grant">지급</button></div></div>
     <div class="card" id="t-events"><h3>🎉 이벤트 관리</h3></div>
     <div class="card"><h3>🧪 테스트 자료 넣기</h3><p class="muted small">학번을 넣고 누르면 그 학생에게 한 단원의 성취기준을 모두 통과한 기록이 들어가요. 학생 서재의 <b>개념도 액자 만들기</b>를 바로 시험할 수 있어요. (실제 학생에게는 쓰지 마세요)</p><div class="btn-row"><input type="text" id="t-seed-id" inputmode="numeric" placeholder="학번 (예: 7777)" style="max-width:160px" autocomplete="off"><button class="btn" id="t-seed">단원 통과 기록 넣기</button></div></div>
     <div class="card"><h3>📝 문항 · 🎟️ 쿠폰 · ✅ 승인은 어디서?</h3><p class="small">형성평가 문항은 <b>학습하기 탭</b>에서 성취기준을 열면 형성평가 아래에 편집기가 나와요. 쿠폰 편집과 쿠폰·사진 액자 승인은 <b>상점 탭</b> 위에 있어요.</p></div>
@@ -775,6 +781,13 @@ async function renderTeacherServer(body) {
     tAdmin.settings = r.settings; renderTSettings();
   } catch (e) { $('#t-settings').innerHTML = '<h3>⚙️ 설정</h3><p class="muted small">불러오지 못했어요: ' + esc(e.message) + '</p>'; }
   tAdmin.events = events.map(e => Object.assign({}, e, { itemIds: (e.itemIds || []).slice() })); renderTEvents();
+  $('#t-grant').onclick = async () => {
+    const amount = Number($('#t-grant-amt').value); const ids = $('#t-grant-ids').value.split(/[s,]+/).map(x => x.trim()).filter(Boolean);
+    if (!(amount >= 1)) return toast('금액을 입력해 주세요', 'bad');
+    if (!confirm((ids.length ? ids.length + '명' : '전체 학생') + '에게 🪙 ' + amount + '씩 지급할까요?')) return;
+    const r = await API.call({ action: 'grantCoins', amount, ids }, { timeout: 120000 }).catch(() => ({ ok: false, message: '연결 실패' }));
+    toast(r.ok ? r.message : (r.message || '실패했어요'), r.ok ? 'ok' : 'bad');
+  };
   $('#t-seed').onclick = async () => { const id = $('#t-seed-id').value.trim(); if (!id) return toast('학번을 입력해 주세요', 'bad'); const r = await API.call({ action: 'seedTest', studentId: id }).catch(() => ({ ok: false, message: '연결 실패' })); toast(r.ok ? r.message : (r.message || '실패했어요'), r.ok ? 'ok' : 'bad'); };
   loadTApprovals();
 }
@@ -839,9 +852,7 @@ function renderTSettings() {
     <label class="toggle"><input type="checkbox" id="ts-class" ${s.classLock && s.classLock.enabled ? 'checked' : ''}> 수업 시간 방 꾸미기 잠금 (이 시간에는 학습하기만 가능)</label>
     <div style="display:flex;gap:8px;align-items:center;margin:0 0 10px 26px" class="small">잠금 시간 <input type="number" id="ts-cstart" min="0" max="23" value="${s.classLock ? s.classLock.start : 9}" style="width:70px"> 시 ~ <input type="number" id="ts-cend" min="1" max="24" value="${s.classLock ? s.classLock.end : 16}" style="width:70px"> 시 <span class="muted">(예: 9 ~ 16)</span></div>
     <label>가입 코드 <input type="text" id="ts-join" value="${esc(s.joinCode)}" placeholder="비우면 누구나 가입할 수 있어요" maxlength="40"></label>
-    <div class="row-label" style="margin-top:12px">💰 가격 (코인)</div>
-    <div class="chips">${[['common','일반 가구'],['rare','레어 가구'],['epic','에픽 가구'],['recolor','색상 리폼'],['restyle','스타일 리폼'],['wallpaper','벽지·바닥'],['photoFrame','사진 액자']].map(([k, n]) => `<label class="small" style="display:flex;align-items:center;gap:4px;margin:0">${n} <input type="number" min="0" data-price="${k}" value="${(s.prices || {})[k] ?? ''}" style="width:76px;padding:6px 8px"></label>`).join('')}</div>
-    <div class="row-label" style="margin-top:8px">🎁 보상 (코인)</div>
+    <div class="row-label" style="margin-top:12px">🎁 보상 (코인) <small class="muted">— 가구·리폼 가격은 상점 탭에서 조절해요</small></div>
     <div class="chips">${[['conceptCoin','개념 1개 열림'],['quizCoin','퀴즈 정답 1개'],['passCoin','요약 통과'],['firstTryBonus','첫 시도 통과'],['monsterBonus','괴물 정화'],['stickerCoin','영감 스티커']].map(([k, n]) => `<label class="small" style="display:flex;align-items:center;gap:4px;margin:0">${n} <input type="number" min="0" data-price="${k}" value="${(s.prices || {})[k] ?? ''}" style="width:76px;padding:6px 8px"></label>`).join('')}</div>
     <div class="btn-row"><button class="btn primary" id="ts-save">설정 저장</button></div>`;
   $('#ts-save').onclick = async () => {
@@ -976,6 +987,20 @@ async function renderTeacherLibrary() {
   $('#tl-refresh').onclick = () => { tLib.rows = null; renderTeacherLibrary(); };
 }
 
+/* ---------------- 교사: 가격 설정 (상점) ---------------- */
+function renderTPrices() {
+  const box = $('#t-prices'); if (!box) return;
+  const p = (serverSettings && serverSettings.prices) || {};
+  const fields = [['common', '일반 가구 기본가'], ['rare', '레어 가구 기본가'], ['epic', '에픽 가구 기본가'], ['recolor', '색상 리폼'], ['restyle', '스타일 리폼'], ['wallpaper', '벽지·바닥'], ['photoFrame', '사진 액자']];
+  box.innerHTML = `<h3>💰 가격 설정 <small class="muted">— 교사에게만 보여요 · 모든 학생에게 적용</small></h3>
+    <div class="chips">${fields.map(([k, n]) => `<label class="small" style="display:flex;align-items:center;gap:4px;margin:0">${n} <input type="number" min="0" data-tprice="${k}" value="${p[k] ?? ''}" style="width:80px;padding:6px 8px"></label>`).join('')}</div>
+    <div class="btn-row"><button class="btn primary" id="tp-save">가격 저장</button><span class="muted small">가구 하나하나의 가격은 아래 가구 상점 카드에서 따로 정할 수 있어요.</span></div>`;
+  $('#tp-save').onclick = async () => {
+    const prices = {}; $$('#t-prices input[data-tprice]').forEach(i => { if (i.value !== '') prices[i.dataset.tprice] = Number(i.value); });
+    const r = await API.call({ action: 'saveSettings', settings: { prices } }).catch(() => ({ ok: false, message: '연결 실패' }));
+    if (r.ok) { serverSettings = Object.assign({}, serverSettings, { prices: r.settings.prices }); applyPricing(r.settings.prices); toast('가격을 저장했어요', 'ok'); renderShop(); } else toast(r.message || '실패했어요', 'bad');
+  };
+}
 /* ---------------- 교사: 가구 추가 (상점) ---------------- */
 function renderTItems() {
   const box = $('#t-items'); if (!box) return;
@@ -1065,7 +1090,7 @@ async function init() {
   try {
     const r = await API.call({ action: 'load' });
     if (!r.ok) { if (r.error === 'night_lock') { $('#overlay-login').classList.add('hidden'); return $('#overlay-lock').classList.remove('hidden'); } API.clearSession(); return renderLogin('login', r.message || '다시 로그인해 주세요'); }
-    setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) { serverSettings = r.settings; applyPricing(r.settings.prices); } if (r.items) applyItems(r.items); state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
+    setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) { serverSettings = r.settings; applyPricing(r.settings.prices); applyItemPrices(r.settings.itemPrices); } if (r.items) applyItems(r.items); state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
     $('#overlay-login').classList.add('hidden'); start();
   } catch (e) { renderLogin('login', '서버에 연결할 수 없어요. 인터넷을 확인한 뒤 다시 들어와 주세요.'); }
 }

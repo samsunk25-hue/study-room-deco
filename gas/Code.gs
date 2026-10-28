@@ -132,6 +132,36 @@ function seedTest_(acc, body, today) {
   return { ok: true, added, unitId, message: `${sacc.name}(${id})에게 "${picked[0].title}" 단원 성취기준 ${picked.length}개 통과 기록을 넣었어요(새로 ${added}건). 학생이 서재에서 그 단원 개념도 액자를 만들 수 있어요.` };
 }
 
+/* ======================= 코인 일괄 지급 (교사) ======================= */
+function grantCoins_(acc, body) {
+  if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
+  const amount = Math.round(Number(body.amount));
+  if (!(amount >= 1 && amount <= 10000)) return fail_('bad_amount', '금액은 1~10000 사이여야 해요');
+  const rows = accountRows_();
+  let targets = rows;
+  if (Array.isArray(body.ids) && body.ids.length) { const want = new Set(body.ids.map(x => String(x).trim())); targets = rows.filter(r => want.has(String(r[ACC.id]))); }
+  if (!targets.length) return fail_('no_target', '대상 학생이 없어요');
+  if (targets.length > 300) return fail_('too_many', '한 번에 300명까지 지급할 수 있어요');
+  let done = 0; const failed = [];
+  targets.forEach(r => {
+    try {
+      const sacc = { id: String(r[ACC.id]), row: 0, name: r[ACC.name], fileId: r[ACC.fileId], privacy: r[ACC.privacy] || 'knock' };
+      const st = loadState_(sacc, false); st.coins += amount; saveState_(sacc, st); done++;
+    } catch (e) { failed.push(String(r[ACC.id])); }
+  });
+  return { ok: true, done, failed, message: '학생 ' + done + '명에게 🪙 ' + amount + '씩 지급했어요' + (failed.length ? ' (실패: ' + failed.join(', ') + ')' : '') };
+}
+/* ======================= 가구별 개별 가격 (교사) ======================= */
+function itemPrices_() { try { return JSON.parse(props_().getProperty('ITEM_PRICES') || '{}'); } catch (e) { return {}; } }
+function applyItemPrices_() { const m = itemPrices_(); Object.keys(m).forEach(id => { if (ITEMS[id] && !ITEMS[id].custom) ITEMS[id].cost = m[id] > 0 ? Number(m[id]) : undefined; }); }
+function saveItemPrices_(acc, body) {
+  if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
+  const src = body.prices && typeof body.prices === 'object' ? body.prices : {};
+  const out = {}; Object.keys(src).forEach(id => { if (!ITEMS[id]) return; const v = Number(src[id]); if (v > 0 && v <= 100000) out[id] = Math.round(v); });
+  props_().setProperty('ITEM_PRICES', JSON.stringify(out));
+  return { ok: true, itemPrices: out };
+}
+
 /* ======================= 교사 승인 (앱 교사 모드) ======================= */
 function approvals_(acc) {
   if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
@@ -259,7 +289,7 @@ function applyPricing_(p) {
 function publicSettings_() {
   const p = props_(); let cl = null;
   try { cl = JSON.parse(p.getProperty('CLASS_LOCK') || 'null'); } catch (e) { cl = null; }
-  return { nightLockOff: p.getProperty('NIGHT_LOCK_OFF') === 'true', classLock: cl || { enabled: !!CONFIG.classLock.enabled, start: CONFIG.classLock.start, end: CONFIG.classLock.end }, prices: pricing_() };
+  return { nightLockOff: p.getProperty('NIGHT_LOCK_OFF') === 'true', classLock: cl || { enabled: !!CONFIG.classLock.enabled, start: CONFIG.classLock.start, end: CONFIG.classLock.end }, prices: pricing_(), itemPrices: itemPrices_() };
 }
 function getSettings_(acc) {
   if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
@@ -755,6 +785,7 @@ function doPost(e) {
   const now = kstNow_(), today = todayKey_(now);
   applyPricing_(pricing_());                                   // 교사가 정한 가격·보상 반영
   applyItems_();                                               // 교사 정의 가구 병합
+  applyItemPrices_();                                          // 가구별 개별 가격
   const tokenId = verifyToken_(body.token);
   const isTeacher = !!tokenId && tokenId.startsWith('T:');
   try {
@@ -770,6 +801,8 @@ function doPost(e) {
       case 'online': return json_(online_(acc));                         // 교사 전용
       case 'unitStats': return json_(unitStats_(acc));                   // 교사 전용
       case 'seedTest': return json_(seedTest_(acc, body, today));          // 교사 전용 (테스트 자료)
+      case 'grantCoins': return json_(grantCoins_(acc, body));           // 교사 전용 (코인 일괄 지급)
+      case 'saveItemPrices': return json_(saveItemPrices_(acc, body));   // 교사 전용 (가구별 가격)
       case 'allSummaries': return json_(allSummaries_(acc));             // 교사 전용
       case 'load': return json_({ ok: true, state: loadState_(acc, true), units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), items: loadItems_(), inbox: inbox_(acc) });
       case 'cmd': return json_(command_(acc, body.cmd, today));
