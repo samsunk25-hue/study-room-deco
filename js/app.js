@@ -658,7 +658,7 @@ function renderVisit() {
 /* ---------------- 상점 ---------------- */
 function renderShop() {
   const room = currentRoom(); const hasFrame = room.inventory.some(i => i.id === 'photo_frame');
-  $('#shop-body').innerHTML = `${isTeacher() ? '<div class="card" id="t-coupon-approvals" style="background:#eef6ff"><h3>✅ 쿠폰 승인 대기</h3><p class="muted small">불러오는 중...</p></div><div class="card" id="t-coupons" style="background:#eef6ff"></div>' : ''}
+  $('#shop-body').innerHTML = `${isTeacher() ? '<div class="card" id="t-photo-approvals" style="background:#eef6ff"><h3>✅ 사진 액자 승인 대기</h3><p class="muted small">불러오는 중...</p></div><div class="card" id="t-coupon-approvals" style="background:#eef6ff"><h3>✅ 쿠폰 승인 대기</h3><p class="muted small">불러오는 중...</p></div><div class="card" id="t-coupons" style="background:#eef6ff"></div>' : ''}
     <div class="card"><h2>🛒 상점</h2><p class="muted small">코인은 요약을 통과하면 받아요. 색상·스타일 리폼은 내 방에서 가구를 선택해 할 수 있어요. 구매한 액자는 <b>${esc(unitTitle(currentRoomId))}</b> 방에 들어가요.</p></div>
     <h3>🖼️ 특별 아이템</h3>
     <div class="shop-grid"><div class="card shop-item"><div class="emoji">📷</div><b>커스텀 사진 액자</b><p class="small muted">빈 액자를 사서 사진을 올려요. 개인정보·초상권·저작권 확인 후 올릴 수 있고, 선생님이 승인하면 컬러로 전시돼요. (월 1회)</p>
@@ -725,10 +725,9 @@ let tAdmin = { settings: null, coupons: null, unitId: null, topicId: null, quest
 async function renderTeacherServer(body) {
   body.innerHTML = `
     <div class="card" style="background:#eef6ff"><h3>👩‍🏫 교사로 접속 중</h3><p class="small">심야·수업 시간 잠금이 적용되지 않고 코인은 무제한이에요. 친구 방 탭에서 모든 학생의 방과 학습자료를 볼 수 있어요. 이 계정의 방은 시험용이라 평가기록부에 들어가지 않아요.</p></div>
-    <div class="card" id="t-approvals"><h3>✅ 사진 액자 승인 대기</h3><p class="muted small">불러오는 중...</p></div>
     <div class="card" id="t-settings"><h3>⚙️ 설정</h3><p class="muted small">불러오는 중...</p></div>
     <div class="card" id="t-events"><h3>🎉 이벤트 관리</h3></div>
-    <div class="card"><h3>📝 문항 · 🎟️ 쿠폰은 어디서?</h3><p class="small">형성평가 문항은 <b>학습하기 탭</b>에서 성취기준을 열면 형성평가 아래에 편집기가 나와요. 쿠폰은 <b>상점 탭</b> 위에 편집기가 있어요.</p></div>
+    <div class="card"><h3>📝 문항 · 🎟️ 쿠폰 · ✅ 승인은 어디서?</h3><p class="small">형성평가 문항은 <b>학습하기 탭</b>에서 성취기준을 열면 형성평가 아래에 편집기가 나와요. 쿠폰 편집과 쿠폰·사진 액자 승인은 <b>상점 탭</b> 위에 있어요.</p></div>
     <div class="card"><h3>📌 시트에서 하는 일</h3><ul class="small">
       <li><b>사진·쿠폰 승인</b>: 승인요청 시트의 승인 체크박스를 켜면 학생이 다음 접속 때 반영돼요. (즉시 반영은 메뉴 ④)</li>
       <li><b>평가기록부</b>: 행=학번, 열=날짜. 10분마다 자동 갱신돼요. (즉시 갱신은 메뉴 ③)</li>
@@ -769,13 +768,13 @@ function renderTEvents() {
   };
 }
 async function loadTApprovals() {
-  const box = $('#t-approvals') || $('#t-coupon-approvals'); if (!box) return;
+  const box = $('#t-photo-approvals') || $('#t-coupon-approvals'); if (!box) return;
   try { const r = await API.call({ action: 'approvals' }); if (!r.ok) throw new Error(r.message || r.error); tAdmin.approvals = r.list || []; renderTApprovals(); }
   catch (e) { box.innerHTML = '<h3>✅ 승인 대기</h3><p class="muted small">불러오지 못했어요: ' + esc(e.message) + '</p>'; }
   // 컨테이너 없는 쪽은 renderTApprovals 가 건너뜀
 }
 function renderTApprovals() {
-  renderTApprovalList('#t-approvals', 'photo', '✅ 사진 액자 승인 대기', '📷 커스텀 사진 액자 — 승인하면 컬러로 전시돼요. 쿠폰 승인은 상점 탭에 있어요.');
+  renderTApprovalList('#t-photo-approvals', 'photo', '✅ 사진 액자 승인 대기', '📷 학생이 올린 커스텀 사진 액자예요. 개인정보·초상권·저작권에 문제가 없는지 보고 승인하면 컬러로 전시돼요.');
   renderTApprovalList('#t-coupon-approvals', 'coupon', '✅ 쿠폰 승인 대기', '학생이 코인으로 신청한 교실 쿠폰이에요. 승인하면 학생 상점에 "사용 가능"으로 표시돼요.');
 }
 function renderTApprovalList(sel, type, title, note) {
