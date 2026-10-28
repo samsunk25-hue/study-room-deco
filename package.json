@@ -7,7 +7,7 @@
     "server": "node tools/deploy-gas.js",
     "server:build": "node tools/deploy-gas.js --build",
     "server:push": "node tools/deploy-gas.js --push",
-    "app": "git add -A && git commit -m \"앱 수정\" && git push",
+    "app": "node tools/stamp.js && git add -A && git commit -m \"앱 수정\" && git push",
     "all": "npm run server && npm run app"
   }
 }

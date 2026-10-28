@@ -932,6 +932,7 @@ async function renderTeacherLibrary() {
 /* ---------------- 시작 ---------------- */
 function start() {
   currentRoomId = roomIds()[0];
+  document.body.classList.toggle('teacher', isTeacher());
   updateHeader(); checkLocks();
   $('#logout-btn').classList.toggle('hidden', MODE !== 'server');
   $('#tab-friends').classList.toggle('hidden', MODE !== 'server');

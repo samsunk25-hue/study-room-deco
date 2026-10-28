@@ -253,3 +253,6 @@ table.sheet th { background: #f6f3ee; }
 .summary-card { border: 1.5px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 8px 0; }
 .summary-card .meta { font-size: 0.8rem; color: var(--muted); display: flex; gap: 8px; justify-content: space-between; align-items: center; }
 .link { background: none; border: 0; color: var(--accent); cursor: pointer; font-weight: 600; padding: 0; font-size: 0.9rem; }
+/* 교사 접속 중: 내 방의 꾸미기 패널은 숨김 (학생 활동 현황판만 표시) */
+body.teacher #inv-card, body.teacher #deco-card, body.teacher #privacy-card, body.teacher #selected-tools,
+body.teacher #monster-card, body.teacher #synergy-list, body.teacher #inbox-card { display: none !important; }
