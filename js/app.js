@@ -594,9 +594,38 @@ function renderLibrary() {
       return `<div class="rec"><div class="meta"><b>${shortDate(r.date)}</b><span>${esc(u ? u.subject + ' · ' + u.title : unitTitle(r.unitId))}${topicCode(r.topicId) ? ' · ' + esc(topicCode(r.topicId)) : ''}</span>
         <span class="tag ${r.pass ? 'pass' : 'fail'}">${r.pass ? '통과 · 학습자료' : '재도전'}</span><span>${r.score}점</span><span>개념 ${(r.opened || []).length}개</span><span>퀴즈 ${r.quiz ? r.quiz.correct + '/' + r.quiz.total : '-'}</span>
         ${r.pass && r.score >= 80 ? '<span class="tag best">⭐ 우수 요약</span>' : ''}${stickerCount[key] ? `<span class="tag best">✨ 영감 스티커 ${stickerCount[key]}</span>` : ''}</div><div class="text">${esc(r.summary)}</div></div>`;
-    }).join('') : '<p class="muted">아직 요약이 없어요. 학습하기에서 첫 요약을 써 보세요!</p>'}</div>`;
+    }).join('') : '<p class="muted">아직 요약이 없어요. 학습하기에서 첫 요약을 써 보세요!</p>'}</div>
+    ${MODE === 'server' ? `<div class="card" id="past-card"><h3>📜 지난 학번 자료 <small class="muted">— 학년이 바뀌어 새 학번으로 가입했다면</small></h3>
+      <p class="muted small">지난 학번과 그때 쓰던 비밀번호를 넣으면 예전 방과 학습자료를 다시 볼 수 있어요. 보기만 할 수 있고 가구·코인은 옮겨지지 않아요.</p>
+      ${(state.pastLinks || []).length ? `<div class="chips">${state.pastLinks.map(p => `<button class="chip past-link" data-id="${esc(p.id)}">📜 ${p.year ? p.year + '학년도 · ' : ''}${esc(p.id)} ${esc(p.name)}</button>`).join('')}</div>` : ''}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:8px"><label style="margin:0;flex:1;min-width:120px">지난 학번 <input type="text" id="past-id" inputmode="numeric" maxlength="10" placeholder="예: 10301"></label><label style="margin:0;flex:1;min-width:120px">그때 비밀번호 <input type="password" id="past-pw" maxlength="30"></label><button class="btn primary" id="past-link">연결</button></div>
+      <div id="past-view"></div></div>` : ''}`;
+  const pl = $('#past-link'); if (pl) pl.onclick = async () => {
+    const id = $('#past-id').value.trim(), password = $('#past-pw').value;
+    if (!id || !password) return toast('지난 학번과 그때 비밀번호를 입력해 주세요', 'bad');
+    const r = await API.call({ action: 'linkPast', id, password }).catch(() => ({ ok: false, message: '연결 실패' }));
+    if (r.ok) { state.pastLinks = r.pastLinks || []; toast('지난 학번을 연결했어요', 'ok'); renderLibrary(); showPast(id); } else toast(r.message || '실패했어요', 'bad');
+  };
+  $$('.past-link').forEach(b => b.onclick = () => showPast(b.dataset.id));
   $$('.btn-concept').forEach(b => b.onclick = () => makeConceptFrame(b.dataset.unit));
-  $$('.btn-view-concept').forEach(b => b.onclick = () => { const r = state.rooms[b.dataset.unit]; const it = r && r.inventory.find(i => i.id === 'concept_frame' && i.img); if (it) showImageModal(it.img, unitTitle(b.dataset.unit) + ' 개념도'); else toast('개념도 액자를 찾을 수 없어요', 'bad'); });
+  $$('.btn-view-concept').forEach(b => b.onclick = () => { const it = Engine.room(state).inventory.find(i => i.id === 'concept_frame' && i.img && i.unitId === b.dataset.unit); if (it) showImageModal(it.img, unitTitle(b.dataset.unit) + ' 개념도'); else toast('개념도 액자를 찾을 수 없어요', 'bad'); });
+}
+let pastRoom = null;
+async function showPast(id) {
+  const box = $('#past-view'); if (!box) return; box.innerHTML = '<p class="muted small">불러오는 중...</p>';
+  const r = await API.call({ action: 'pastView', id }).catch(() => ({ ok: false, message: '연결 실패' }));
+  if (!r.ok) { box.innerHTML = `<p class="muted">${esc(r.message || '불러오지 못했어요')}</p>`; return; }
+  const v = r.view, rid = Object.keys(v.rooms)[0], recs = (v.records || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+  box.innerHTML = `<h3 style="margin-top:14px">🏠 ${r.link.year ? r.link.year + '학년도 ' : ''}${esc(r.link.id)} ${esc(r.link.name)}의 방 <small class="muted">🪙 ${v.coins || 0} · 보기만 할 수 있어요</small></h3>
+    ${rid ? '<canvas id="past-canvas" width="820" height="640"></canvas><div class="room-hint" id="past-hint"><span class="small muted">벽을 클릭하면 액자를 크게 볼 수 있어요.</span></div>' : '<p class="muted small">꾸민 방이 없어요.</p>'}
+    ${(v.frames || []).length ? `<div class="row-label">🧠 그때 받은 개념도 액자</div><div class="chips">${v.frames.map((f, i) => `<button class="chip past-frame" data-i="${i}">${esc(unitTitle(f.unitId))}</button>`).join('')}</div>` : ''}
+    <div class="row-label" style="margin-top:10px">📚 그때 쓴 요약 <small class="muted">${recs.length}개</small></div>
+    ${recs.length ? recs.map(x => `<div class="rec"><div class="meta"><b>${shortDate(x.date)}</b><span>${esc(unitTitle(x.unitId))}${topicCode(x.topicId) ? ' · ' + esc(topicCode(x.topicId)) : ''}</span><span class="tag ${x.pass ? 'pass' : 'fail'}">${x.pass ? '통과' : '재도전'}</span><span>${x.score}점</span><span>개념 ${x.opened}개</span></div><div class="text">${esc(x.summary || '')}</div></div>`).join('') : '<p class="muted small">요약이 없어요.</p>'}`;
+  const cv = $('#past-canvas');
+  if (cv) {
+    pastRoom = createRoom(cv, () => v.rooms[rid], { readOnly: () => false, isLocked: () => false, onSelect: () => {}, onChange: () => {}, onWallClick: side => { pastRoom.setView('wall', side); const h = $('#past-hint'); if (h) { h.innerHTML = '<button class="btn tiny" id="past-other">🔄 다른 벽</button> <button class="btn tiny primary" id="past-iso">↩ 방 전체</button>'; $('#past-other').onclick = () => pastRoom.toggleWall(); $('#past-iso').onclick = () => { pastRoom.setView('iso'); h.innerHTML = '<span class="small muted">벽을 클릭하면 액자를 크게 볼 수 있어요.</span>'; }; } } });
+  }
+  $$('.past-frame').forEach(b => b.onclick = () => { const f = v.frames[+b.dataset.i]; showImageModal(f.img, unitTitle(f.unitId) + ' 개념도'); });
 }
 async function makeConceptFrame(unitId) {
   const recs = Engine.unitProgress(state, topics, unitId).records;

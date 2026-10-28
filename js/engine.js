@@ -33,7 +33,7 @@ const Engine = (() => {
       version: VERSION, student, coins: 0, uidSeq: 1,
       rooms: {},                 // { home: { wall, floor, inventory[], monster } }  (v3부터 방 하나)
       records: [],               // { date, topicId, unitId, attempts, quizRewarded, passRewarded, opened[], quiz, summary, score, pass, hits, reason, reward }
-      coupons: [], conceptMaps: {}, photoMonths: {},
+      coupons: [], conceptMaps: {}, photoMonths: {}, pastLinks: [],   // pastLinks: 본인이 연결한 지난 학번 자료
       settings: { privacy: 'knock', bypassLock: false, eventForce: false },
       synergyLog: {}, pendingApprovals: [], stickerLog: {},
       createdAt: today || '', updatedAt: today || '',

@@ -22,7 +22,7 @@
  *  ■ 원칙: 학생 데이터는 이 폴더 밖으로 나가지 않는다. (외부 AI 호출 없음 — 판정은 judge.gs 규칙)
  * ===================================================================== */
 
-const SHEETS = { accounts: '학생계정', teachers: '교사', units: '단원', questions: '문항', records: '평가기록부', approvals: '승인요청', social: '소셜' };
+const SHEETS = { accounts: '학생계정', teachers: '교사', units: '단원', questions: '문항', records: '평가기록부', approvals: '승인요청', past: '지난계정', social: '소셜' };
 // 문항 시트: 한 행 = 문항 하나. 성취기준ID 는 단원 시트의 단원ID(예: sci2_14_02). 이 시트에 행이 있는 성취기준은 단원 시트의 문항 칸 대신 이 행들을 사용
 const QUESTION_HEADER = ['성취기준ID', '유형(객관식/단답형)', '질문', '보기1', '보기2', '보기3', '보기4', '정답(객관식: 번호 1~4 / 단답형: 정답1;정답2)', '힌트', '사용'];
 const COUPON_HEADER = ['쿠폰ID', '이름', '코인', '설명', '사용'];
@@ -457,6 +457,7 @@ function register_(body, today) {
       if (oldYear >= nowYear) return fail_('exists', '이 학번은 올해 "' + oldName.slice(0, 1) + '○○" 이름으로 이미 가입되어 있어요. 학번을 확인하거나 선생님께 말씀하세요');
       // 학년이 바뀌어 같은 학번을 다른 학생이 쓰게 됨 → 지난 학년도 자료는 이름을 바꿔 보관하고 새 방으로 시작
       try { const f = DriveApp.getFileById(old.data[ACC.fileId]); f.setName(id + '_' + oldName + '_' + oldYear + '학년도.json'); } catch (e) { /* 파일이 없으면 그냥 새로 시작 */ }
+      try { sheet_(SHEETS.past, PAST_HEADER).appendRow([id, oldName, old.data[ACC.hash], old.data[ACC.salt], old.data[ACC.fileId], oldYear, today]); } catch (e) { /* 보관 실패는 무시 */ }   // 본인이 새 학번으로 지난 자료를 볼 때 비밀번호 확인용
       at = old.row; archived = { name: oldName, year: oldYear };
     }
     const salt = Utilities.getUuid();
@@ -474,6 +475,43 @@ function register_(body, today) {
     if (archived) try { sheet_(SHEETS.accounts, ACC_HEADER).getRange(at, ACC_HEADER.length + 1).setValue('지난 학년도(' + archived.year + ') ' + archived.name + ' 자료는 학생데이터 폴더에 보관'); } catch (e) { /* 메모 실패는 무시 */ }
     return { ok: true, token: makeToken_(id), name, state, units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), items: loadItems_(), inbox: { knocks: [], stickers: [] } };
   } finally { lock.releaseLock(); }
+}
+/* ======================= 지난 학번 자료 (학생 본인이 지난 학번+비밀번호로 연결) ======================= */
+const PAST_HEADER = ['학번', '이름', '비밀번호해시', '솔트', '파일ID', '학년도', '보관일'];
+function linkPast_(acc, body, today) {
+  if (acc.teacher) return fail_('forbidden', '교사 계정에는 지난 학번이 없어요');
+  const pid = String(body.id || '').trim(), pw = String(body.password || '');
+  if (!/^\d{3,10}$/.test(pid) || !pw) return fail_('bad', '지난 학번과 비밀번호를 입력해 주세요');
+  if (pid === acc.id) return fail_('same', '지금 쓰고 있는 학번이에요');
+  const failKey = 'pfail_' + acc.id;
+  if (Number(cache_().get(failKey) || 0) >= 10) return fail_('locked', '여러 번 틀려 10분 동안 잠겼어요');
+  let found = null;
+  const live = findAccount_(pid);   // 아직 다른 학생이 쓰지 않는 지난 학번
+  if (live && hash_(live.data[ACC.salt], pw) === live.data[ACC.hash]) found = { id: pid, name: String(live.data[ACC.name]), fileId: String(live.data[ACC.fileId]), year: schoolYear_(live.data[ACC.created]) };
+  if (!found) {                      // 새 학년도에 다른 학생이 이어받아 보관된 계정
+    const sh = sheet_(SHEETS.past, PAST_HEADER); const n = sh.getLastRow();
+    const rows = n > 1 ? sh.getRange(2, 1, n - 1, PAST_HEADER.length).getValues() : [];
+    for (let i = rows.length - 1; i >= 0; i--) { const r = rows[i]; if (String(r[0]) === pid && hash_(String(r[3]), pw) === String(r[2])) { found = { id: pid, name: String(r[1]), fileId: String(r[4]), year: Number(r[5]) || 0 }; break; } }
+  }
+  if (!found) { cache_().put(failKey, String(Number(cache_().get(failKey) || 0) + 1), 600); return fail_('bad_login', '지난 학번 또는 그때 비밀번호가 맞지 않아요'); }
+  cache_().remove(failKey);
+  const st = loadState_(acc, false);
+  st.pastLinks = (st.pastLinks || []).filter(p => p.fileId !== found.fileId);
+  st.pastLinks.push({ id: found.id, name: found.name, fileId: found.fileId, year: found.year, linkedAt: today });
+  saveState_(acc, st);
+  return { ok: true, pastLinks: st.pastLinks };
+}
+function pastView_(acc, body) {
+  const st = loadState_(acc, false);
+  const link = (st.pastLinks || []).find(p => p.id === String(body.id || ''));
+  if (!link) return fail_('no_link', '먼저 지난 학번을 연결해 주세요');
+  let past;
+  try { past = Engine.migrate(JSON.parse(DriveApp.getFileById(link.fileId).getBlob().getDataAsString('UTF-8')), loadUnits_()); } catch (e) { return fail_('no_file', '지난 자료 파일을 찾을 수 없어요. 선생님께 문의하세요'); }
+  const view = Engine.publicView(past);   // 본인 자료라 점수·전체 기록도 함께
+  view.records = (past.records || []).map(r => ({ date: r.date, topicId: r.topicId, unitId: r.unitId, pass: !!r.pass, score: r.score, summary: r.summary, opened: (r.opened || []).length, quiz: r.quiz }));
+  view.coins = past.coins;
+  view.frames = []; Object.keys(past.rooms).forEach(k => past.rooms[k].inventory.forEach(i => { if (i.id === 'concept_frame' && i.img) view.frames.push({ unitId: i.unitId || k, img: i.img }); }));
+  return { ok: true, view, link: { id: link.id, name: link.name, year: link.year } };
 }
 /** 학년도: 3월~다음해 2월 */
 function schoolYear_(d) { const s = d instanceof Date ? Utilities.formatDate(d, 'Asia/Seoul', 'yyyy-MM-dd') : String(d || ''); const y = Number(s.slice(0, 4)), m = Number(s.slice(5, 7)); if (!y) return 0; return m >= 3 ? y : y - 1; }
@@ -859,6 +897,8 @@ function doPost(e) {
         return json_({ ok: true, result: Engine.grade(u, body.answers || {}) });
       }
       case 'changePassword': return json_(changePassword_(acc, body));
+      case 'linkPast': return json_(linkPast_(acc, body, today));          // 학생: 지난 학번 연결
+      case 'pastView': return json_(pastView_(acc, body));                // 학생: 지난 학번 자료 보기
       case 'classmates': return json_(classmates_(acc));
       case 'knock': return json_(knock_(acc, body));
       case 'allow': return json_(allow_(acc, body));
