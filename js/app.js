@@ -731,6 +731,7 @@ async function renderTeacherServer(body) {
     <div class="card" style="background:#eef6ff"><h3>👩‍🏫 교사로 접속 중</h3><p class="small">심야·수업 시간 잠금이 적용되지 않고 코인은 무제한이에요. 친구 방 탭에서 모든 학생의 방과 학습자료를 볼 수 있어요. 이 계정의 방은 시험용이라 평가기록부에 들어가지 않아요.</p></div>
     <div class="card" id="t-settings"><h3>⚙️ 설정</h3><p class="muted small">불러오는 중...</p></div>
     <div class="card" id="t-events"><h3>🎉 이벤트 관리</h3></div>
+    <div class="card"><h3>🧪 테스트 자료 넣기</h3><p class="muted small">학번을 넣고 누르면 그 학생에게 이번 달 통과 기록 4일치가 들어가요. 학생 서재의 <b>AI 개념도 액자 만들기</b> 조건을 바로 시험할 수 있어요. (실제 학생에게는 쓰지 마세요)</p><div class="btn-row"><input type="text" id="t-seed-id" inputmode="numeric" placeholder="학번 (예: 7777)" style="max-width:160px" autocomplete="off"><button class="btn" id="t-seed">통과 기록 4일치 넣기</button></div></div>
     <div class="card"><h3>📝 문항 · 🎟️ 쿠폰 · ✅ 승인은 어디서?</h3><p class="small">형성평가 문항은 <b>학습하기 탭</b>에서 성취기준을 열면 형성평가 아래에 편집기가 나와요. 쿠폰 편집과 쿠폰·사진 액자 승인은 <b>상점 탭</b> 위에 있어요.</p></div>
     <div class="card"><h3>📌 시트에서 하는 일</h3><ul class="small">
       <li><b>사진·쿠폰 승인</b>: 승인요청 시트의 승인 체크박스를 켜면 학생이 다음 접속 때 반영돼요. (즉시 반영은 메뉴 ④)</li>
@@ -743,6 +744,7 @@ async function renderTeacherServer(body) {
     tAdmin.settings = r.settings; renderTSettings();
   } catch (e) { $('#t-settings').innerHTML = '<h3>⚙️ 설정</h3><p class="muted small">불러오지 못했어요: ' + esc(e.message) + '</p>'; }
   tAdmin.events = events.map(e => Object.assign({}, e, { itemIds: (e.itemIds || []).slice() })); renderTEvents();
+  $('#t-seed').onclick = async () => { const id = $('#t-seed-id').value.trim(); if (!id) return toast('학번을 입력해 주세요', 'bad'); const r = await API.call({ action: 'seedTest', studentId: id }).catch(() => ({ ok: false, message: '연결 실패' })); toast(r.ok ? r.message : (r.message || '실패했어요'), r.ok ? 'ok' : 'bad'); };
   loadTApprovals();
 }
 function renderTEvents() {

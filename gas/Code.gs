@@ -103,6 +103,30 @@ function saveEvents_(acc, body) {
   return { ok: true, events: list };
 }
 
+/* ======================= 테스트 자료 (교사): 개념도 액자 등 확인용 ======================= */
+function seedTest_(acc, body, today) {
+  if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
+  const id = String(body.studentId || '').trim();
+  const sacc = account_(id); if (!sacc) return fail_('no_student', '학번 ' + id + ' 학생을 찾을 수 없어요');
+  const units = loadUnits_(); if (units.length < 4) return fail_('no_units', '단원이 4개 이상 있어야 해요');
+  const st = loadState_(sacc, false);
+  const day = Number(today.slice(8, 10)), month = today.slice(0, 7);
+  const days = []; for (let d = day; d >= 1 && days.length < 4; d--) days.push(month + '-' + (d < 10 ? '0' : '') + d);
+  if (days.length < 4) return fail_('early_month', '이번 달 날짜가 4일보다 적어요. 5일 이후에 해 주세요');
+  const picked = [units[0], units[Math.floor(units.length / 3)], units[Math.floor(units.length * 2 / 3)], units[units.length - 1]];
+  let added = 0;
+  picked.forEach((u, i) => {
+    const date = days[i];
+    if (st.records.some(r => r.date === date && r.topicId === u.id)) return;
+    const hits = u.keyConcepts.slice(0, 4).map(c => c.term);
+    st.records.push({ date, topicId: u.id, unitId: u.unitId, attempts: 1, quizRewarded: true, passRewarded: true, opened: hits, quiz: { correct: 2, total: 2 },
+      summary: '[테스트 자료] ' + hits.join(', ') + ' 개념을 연결해 설명한 요약이에요.', score: 85, pass: true, hits, reason: 'ok', reward: { coins: 90, itemId: null } });
+    added++;
+  });
+  saveState_(sacc, st); cache_().remove('allsum');
+  return { ok: true, added, days, message: `${sacc.name}(${id})에게 이번 달 통과 기록 ${added}건을 넣었어요. 학생이 서재에서 "개념도 액자 만들기"를 누를 수 있어요.` };
+}
+
 /* ======================= 교사 승인 (앱 교사 모드) ======================= */
 function approvals_(acc) {
   if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
@@ -676,6 +700,7 @@ function doPost(e) {
     switch (a) {
       case 'online': return json_(online_(acc));                         // 교사 전용
       case 'unitStats': return json_(unitStats_(acc));                   // 교사 전용
+      case 'seedTest': return json_(seedTest_(acc, body, today));          // 교사 전용 (테스트 자료)
       case 'allSummaries': return json_(allSummaries_(acc));             // 교사 전용
       case 'load': return json_({ ok: true, state: loadState_(acc, true), units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), inbox: inbox_(acc) });
       case 'cmd': return json_(command_(acc, body.cmd, today));
