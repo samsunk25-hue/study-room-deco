@@ -692,7 +692,8 @@ function renderVisit() {
 function renderShop() {
   const room = currentRoom(); const hasFrame = room.inventory.some(i => i.id === 'photo_frame');
   $('#shop-body').innerHTML = `
-    <div class="card"><h2>🛒 상점</h2><p class="muted small">코인은 요약을 통과하면 받아요. 색상·스타일 리폼은 내 방에서 가구를 선택해 할 수 있어요. 구매한 액자는 <b>${esc(unitTitle(currentRoomId))}</b> 방에 들어가요.</p></div>
+    <div class="card"><h2>🛒 상점</h2><p class="muted small">코인은 요약을 통과하면 받아요. 색상·스타일 리폼은 내 방에서 가구를 선택해 할 수 있어요. 산 액자와 가구는 아래에서 고른 방의 보관함에 들어가요.</p>
+    <div class="row-label" style="margin-top:8px">🏠 넣을 방 고르기</div><div class="chips" id="shop-rooms">${roomIds().map(id => `<button class="chip ${id === currentRoomId ? 'on' : ''}" data-id="${esc(id)}">${esc(unitTitle(id))}</button>`).join('')}</div></div>
     ${isTeacher() ? '<div class="card" id="t-photo-approvals" style="background:#eef6ff"><h3>✅ 사진 액자 승인 대기</h3><p class="muted small">불러오는 중...</p></div><div class="card" id="t-coupon-approvals" style="background:#eef6ff"><h3>✅ 쿠폰 승인 대기</h3><p class="muted small">불러오는 중...</p></div><div class="card" id="t-coupons" style="background:#eef6ff"></div><div class="card" id="t-items" style="background:#eef6ff"></div><div class="card" id="t-prices" style="background:#eef6ff"></div>' : ''}
     <h3>🖼️ 특별 아이템</h3>
     <div class="shop-grid"><div class="card shop-item"><div class="emoji">📷</div><b>커스텀 사진 액자</b><p class="small muted">빈 액자를 사서 사진을 올려요. 개인정보·초상권·저작권 확인 후 올릴 수 있고, 선생님이 승인하면 컬러로 전시돼요. (월 1회)</p>
@@ -706,9 +707,10 @@ function renderShop() {
     tAdmin.coupons = coupons.map(c => Object.assign({}, c)); renderTCoupons(); tAdmin.items = customItems.map(x => Object.assign({}, x)); renderTItems(); loadTApprovals(); renderTPrices();
     const sip = $('#save-item-prices'); if (sip) sip.onclick = async () => { const prices = {}; $$('.item-price').forEach(i => { if (i.value !== '') prices[i.dataset.id] = Number(i.value); }); const r = await API.call({ action: 'saveItemPrices', prices }).catch(() => ({ ok: false, message: '연결 실패' })); if (r.ok) { applyItemPrices(r.itemPrices); toast('가구별 가격을 저장했어요', 'ok'); renderShop(); } else toast(r.message || '실패했어요', 'bad'); };
   }
+  $$('#shop-rooms .chip').forEach(b => b.onclick = () => { currentRoomId = b.dataset.id; renderShop(); });
   const bf = $('#buy-frame'); if (bf) bf.onclick = async () => { const r = await dispatch({ type: 'buyFrame', unitId: currentRoomId }, true); if (r.ok) { renderShop(); toast('빈 액자를 샀어요! 내 방 보관함에서 벽에 걸고 사진을 올려 보세요.', 'ok'); } };
-  $('.buy-item').forEach(b => b.onclick = async () => { const r = await dispatch({ type: 'buyItem', unitId: currentRoomId, itemId: b.dataset.id }, true); if (r.ok) { toast(`${ITEMS[b.dataset.id].name}을(를) 샀어요! ${unitTitle(currentRoomId)} 방 보관함에서 놓을 수 있어요.`, 'ok'); renderShop(); } });
-  $('.buy-coupon').forEach(b => b.onclick = async () => { const r = await dispatch({ type: 'buyCoupon', id: b.dataset.id }, true); if (r.ok) { renderShop(); toast('쿠폰을 신청했어요. 선생님 승인을 기다려요!', 'ok'); } });
+  $$('.buy-item').forEach(b => b.onclick = async () => { const r = await dispatch({ type: 'buyItem', unitId: currentRoomId, itemId: b.dataset.id }, true); if (r.ok) { toast(`${ITEMS[b.dataset.id].name}을(를) 샀어요! ${unitTitle(currentRoomId)} 방 보관함에서 놓을 수 있어요.`, 'ok'); renderShop(); } });
+  $$('.buy-coupon').forEach(b => b.onclick = async () => { const r = await dispatch({ type: 'buyCoupon', id: b.dataset.id }, true); if (r.ok) { renderShop(); toast('쿠폰을 신청했어요. 선생님 승인을 기다려요!', 'ok'); } });
 }
 
 /* ---------------- 교사 ---------------- */
