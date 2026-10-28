@@ -101,7 +101,7 @@ function teacherAccount_(email) {
   const name = teacherName_(e); if (!name) return null;
   const key = 'TFILE_' + e; let fileId = props_().getProperty(key);
   if (!fileId) {
-    const f = subfolder_(FOLDERS.data).createFile('교사_' + e + '.json', JSON.stringify(Engine.newState({ id: 'T:' + e, name: name + ' 선생님' }, todayKey())), MimeType.PLAIN_TEXT);
+    const f = subfolder_(FOLDERS.data).createFile('교사_' + e + '.json', JSON.stringify(Engine.newState({ id: 'T:' + e, name: name + ' 선생님' }, todayKey_())), MimeType.PLAIN_TEXT);
     fileId = f.getId(); props_().setProperty(key, fileId);
   }
   return { id: 'T:' + e, row: 0, name: name + ' 선생님', fileId, privacy: 'private', teacher: true };
