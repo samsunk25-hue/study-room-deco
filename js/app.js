@@ -416,8 +416,13 @@ function renderStudy() {
         <div class="feedback" id="fb${i}"></div></div>`).join('')}
       <div class="btn-row">
         ${study.graded ? '<button class="btn primary big" id="btn-next">요약 쓰러 가기 →</button>' : '<button class="btn primary big" id="btn-grade">채점하기</button>'}
-        <button class="btn ghost" id="btn-back">← 성취기준 선택</button></div></div>`;
+        <button class="btn ghost" id="btn-back">← 성취기준 선택</button>
+        ${isTeacher() ? '<button class="btn accent" id="btn-edit-q">✏️ 이 문항 수정 (교사)</button>' : ''}</div></div>`;
     $('#btn-back').onclick = () => { study = { step: 'topics', unit: u }; renderStudy(); };
+    const eq = $('#btn-edit-q'); if (eq) eq.onclick = () => {           // 교사: 이 성취기준의 문항 편집기로 바로 이동
+      tAdmin.unitId = u.id; tAdmin.topicId = t.id; showScreen('teacher');
+      setTimeout(() => { const el = $('#t-questions'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 600);
+    };
     if (study.graded) { showQuizFeedback(); $('#btn-next').onclick = () => { study.step = 'summary'; renderStudy(); }; }
     else $('#btn-grade').onclick = async () => {
       t.questions.forEach((q, i) => {
