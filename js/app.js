@@ -13,6 +13,7 @@ const pad = n => String(n).padStart(2, '0');
 let state = null, topics = [], units = [], currentRoomId = null, serverOffset = 0;
 let coupons = CONFIG.coupons.slice();   // 서버 모드에서는 쿠폰 시트 내용으로 교체됨
 let events = Engine.defaultEvents();    // 서버 모드에서는 이벤트 시트 내용으로 교체됨
+let serverSettings = { nightLockOff: false, classLock: Object.assign({}, CONFIG.classLock) };   // 교사가 앱에서 바꾸는 공개 설정
 let myRoom = null, visitRoom = null;
 let study = { step: 'units' };
 let teacherOpen = false;
@@ -88,7 +89,7 @@ async function dispatch(cmd, interactive = false) {
 async function reloadFromServer() {
   try {
     const r = await API.call({ action: 'load' });
-    if (r.ok) { if (r.units) setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; state = Engine.migrate(r.state, units); inbox = r.inbox || inbox; updateHeader(); refreshCurrent(); }
+    if (r.ok) { if (r.units) setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) serverSettings = r.settings; state = Engine.migrate(r.state, units); inbox = r.inbox || inbox; updateHeader(); checkLocks(); refreshCurrent(); }
     else handleServerError(r);
   } catch (e) { /* 다음 기회에 */ }
 }
@@ -111,8 +112,8 @@ window.addEventListener('online', () => API.kick());
 function nowHour() { return new Date(Date.now() + serverOffset).getHours(); }
 function inRange(h, s, e) { return s < e ? (h >= s && h < e) : (h >= s || h < e); }
 function isTeacher() { const s = MODE === 'server' && API.getSession(); return !!(s && s.teacher); }   // 교사는 시간 제한 없음
-function isNightLocked() { const c = CONFIG.nightLock; return c.enabled && !isTeacher() && !(state && state.settings.bypassLock) && inRange(nowHour(), c.start, c.end); }
-function isClassLocked() { const c = CONFIG.classLock; return c.enabled && !isTeacher() && !(state && state.settings.bypassLock) && inRange(nowHour(), c.start, c.end); }
+function isNightLocked() { const c = CONFIG.nightLock; return c.enabled && !serverSettings.nightLockOff && !isTeacher() && !(state && state.settings.bypassLock) && inRange(nowHour(), c.start, c.end); }
+function isClassLocked() { const c = serverSettings.classLock || CONFIG.classLock; return !!c.enabled && !isTeacher() && !(state && state.settings.bypassLock) && inRange(nowHour(), Number(c.start), Number(c.end)); }
 function checkLocks() {
   $('#overlay-lock').classList.toggle('hidden', !isNightLocked());
   $('#lock-banner').classList.toggle('hidden', !isClassLocked());
@@ -200,7 +201,7 @@ async function auth(action, payload) {
       return renderLogin(mode, msg);
     }
     API.setSession({ token: r.token, id: r.id || payload.id, name: r.name, teacher: !!r.teacher });
-    setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
+    setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) serverSettings = r.settings; state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
     $('#overlay-login').classList.add('hidden');
     if (r.mustChange) changePasswordModal(true);
     start();
@@ -385,7 +386,7 @@ async function answerKnock(visitorId, allow) {
 async function pollInbox() {
   if (MODE !== 'server' || !state) return;
   if (isTeacher()) return pollOnline();
-  try { const r = await API.call({ action: 'inbox' }); if (r.ok) { inbox = r.inbox; if ($('#screen-room').classList.contains('active')) renderInbox(); } } catch (e) { /* ignore */ }
+  try { const r = await API.call({ action: 'inbox' }); if (r.ok) { inbox = r.inbox; if (r.settings) { serverSettings = r.settings; checkLocks(); } if ($('#screen-room').classList.contains('active')) renderInbox(); } } catch (e) { /* ignore */ }
 }
 
 /* ---------------- 학습하기 ---------------- */
@@ -798,13 +799,15 @@ function renderTSettings() {
   const s = tAdmin.settings;
   $('#t-settings').innerHTML = `<h3>⚙️ 설정 <small class="muted">(모든 학생에게 적용)</small></h3>
     <label class="toggle"><input type="checkbox" id="ts-night" ${s.nightLockOff ? 'checked' : ''}> 심야 잠금 해제 (밤 10시~아침 7시에도 학생 접속 허용)</label>
-    <label class="toggle"><input type="checkbox" id="ts-event" ${s.eventForce ? 'checked' : ''}> 이벤트 강제 활성화 (${esc(CONFIG.event.name)} 한정 가구 드롭)</label>
+    <label class="toggle"><input type="checkbox" id="ts-event" ${s.eventForce ? 'checked' : ''}> 모든 이벤트 강제 활성화 (기간과 상관없이 한정 가구 드롭)</label>
+    <label class="toggle"><input type="checkbox" id="ts-class" ${s.classLock && s.classLock.enabled ? 'checked' : ''}> 수업 시간 방 꾸미기 잠금 (이 시간에는 학습하기만 가능)</label>
+    <div style="display:flex;gap:8px;align-items:center;margin:0 0 10px 26px" class="small">잠금 시간 <input type="number" id="ts-cstart" min="0" max="23" value="${s.classLock ? s.classLock.start : 9}" style="width:70px"> 시 ~ <input type="number" id="ts-cend" min="1" max="24" value="${s.classLock ? s.classLock.end : 16}" style="width:70px"> 시 <span class="muted">(예: 9 ~ 16)</span></div>
     <label>가입 코드 <input type="text" id="ts-join" value="${esc(s.joinCode)}" placeholder="비우면 누구나 가입할 수 있어요" maxlength="40"></label>
     <div class="btn-row"><button class="btn primary" id="ts-save">설정 저장</button></div>`;
   $('#ts-save').onclick = async () => {
-    const settings = { nightLockOff: $('#ts-night').checked, eventForce: $('#ts-event').checked, joinCode: $('#ts-join').value.trim() };
+    const settings = { nightLockOff: $('#ts-night').checked, eventForce: $('#ts-event').checked, joinCode: $('#ts-join').value.trim(), classLock: { enabled: $('#ts-class').checked, start: Number($('#ts-cstart').value), end: Number($('#ts-cend').value) } };
     const r = await API.call({ action: 'saveSettings', settings }).catch(() => ({ ok: false, message: '연결 실패' }));
-    if (r.ok) { tAdmin.settings = r.settings; toast('설정을 저장했어요', 'ok'); } else toast(r.message || '실패했어요', 'bad');
+    if (r.ok) { tAdmin.settings = r.settings; serverSettings = { nightLockOff: r.settings.nightLockOff, classLock: r.settings.classLock }; checkLocks(); toast('설정을 저장했어요. 학생에게는 다음 접속·1분 내 반영돼요', 'ok'); } else toast(r.message || '실패했어요', 'bad');
   };
 }
 function renderTCoupons() {
@@ -968,7 +971,7 @@ async function init() {
   try {
     const r = await API.call({ action: 'load' });
     if (!r.ok) { if (r.error === 'night_lock') { $('#overlay-login').classList.add('hidden'); return $('#overlay-lock').classList.remove('hidden'); } API.clearSession(); return renderLogin('login', r.message || '다시 로그인해 주세요'); }
-    setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
+    setTopics(r.units); if (r.coupons) coupons = r.coupons; if (r.events) events = r.events; if (r.settings) serverSettings = r.settings; state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
     $('#overlay-login').classList.add('hidden'); start();
   } catch (e) { renderLogin('login', '서버에 연결할 수 없어요. 인터넷을 확인한 뒤 다시 들어와 주세요.'); }
 }

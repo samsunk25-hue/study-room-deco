@@ -167,11 +167,17 @@ function approve_(acc, body) {
   } finally { lock.releaseLock(); }
 }
 
-/* ======================= 교사 설정 (심야 잠금 · 이벤트 · 가입 코드) ======================= */
+/* ======================= 교사 설정 (심야 잠금 · 수업 시간 꾸미기 잠금 · 이벤트 · 가입 코드) ======================= */
+/** 학생 앱에도 내려가는 공개 설정 */
+function publicSettings_() {
+  const p = props_(); let cl = null;
+  try { cl = JSON.parse(p.getProperty('CLASS_LOCK') || 'null'); } catch (e) { cl = null; }
+  return { nightLockOff: p.getProperty('NIGHT_LOCK_OFF') === 'true', classLock: cl || { enabled: !!CONFIG.classLock.enabled, start: CONFIG.classLock.start, end: CONFIG.classLock.end } };
+}
 function getSettings_(acc) {
   if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
   const p = props_();
-  return { ok: true, settings: { nightLockOff: p.getProperty('NIGHT_LOCK_OFF') === 'true', eventForce: p.getProperty('EVENT_FORCE') === 'true', joinCode: p.getProperty('JOIN_CODE') || '' } };
+  return { ok: true, settings: Object.assign(publicSettings_(), { eventForce: p.getProperty('EVENT_FORCE') === 'true', joinCode: p.getProperty('JOIN_CODE') || '' }) };
 }
 function saveSettings_(acc, body) {
   if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
@@ -179,6 +185,10 @@ function saveSettings_(acc, body) {
   if ('nightLockOff' in s) p.setProperty('NIGHT_LOCK_OFF', s.nightLockOff ? 'true' : 'false');
   if ('eventForce' in s) p.setProperty('EVENT_FORCE', s.eventForce ? 'true' : 'false');
   if ('joinCode' in s) { const v = String(s.joinCode || '').trim(); if (v) p.setProperty('JOIN_CODE', v); else p.deleteProperty('JOIN_CODE'); }
+  if (s.classLock && typeof s.classLock === 'object') {
+    const cl = { enabled: !!s.classLock.enabled, start: Math.min(23, Math.max(0, Number(s.classLock.start) || 0)), end: Math.min(24, Math.max(0, Number(s.classLock.end) || 0)) };
+    p.setProperty('CLASS_LOCK', JSON.stringify(cl));
+  }
   return getSettings_(acc);
 }
 const FOLDERS = { data: '학생데이터', photos: '승인대기사진' };
@@ -271,7 +281,7 @@ function teacherLogin_(body) {
   let info = null; try { info = raw ? JSON.parse(raw) : null; } catch (e) { info = null; }
   if (!info || info.exp < Date.now()) return fail_('bad_code', code.length === 8 ? '교사 접속 코드가 맞지 않거나 만료됐어요. 시트 메뉴 ⑧에서 다시 발급해 보세요' : '교사 접속 코드는 8자리예요 (예: AB12-CD34). 시트 메뉴 ⑧에서 발급하세요');
   const acc = account_('T:' + info.email); if (!acc) return fail_('not_teacher', '승인된 교사가 아니에요. 관리자에게 등록을 요청하세요');
-  return { ok: true, token: makeToken_(acc.id), id: acc.id, name: acc.name, teacher: true, state: loadState_(acc, false), units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), inbox: { knocks: [], stickers: [] } };
+  return { ok: true, token: makeToken_(acc.id), id: acc.id, name: acc.name, teacher: true, state: loadState_(acc, false), units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), inbox: { knocks: [], stickers: [] } };
 }
 
 function register_(body, today) {
@@ -296,7 +306,7 @@ function register_(body, today) {
     sh.getRange(at, 1, 1, ACC_HEADER.length).setValues([[id, name, hash_(salt, pw), salt, file.getId(), today, today, 'knock', false]]);
     sh.getRange(at, 1).setNumberFormat('@');
     uncache_(id);
-    return { ok: true, token: makeToken_(id), name, state, units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), inbox: { knocks: [], stickers: [] } };
+    return { ok: true, token: makeToken_(id), name, state, units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), inbox: { knocks: [], stickers: [] } };
   } finally { lock.releaseLock(); }
 }
 function login_(body, today) {
@@ -313,7 +323,7 @@ function login_(body, today) {
   uncache_(id);
   const acc = account_(id);
   const state = loadState_(acc, true);
-  return { ok: true, token: makeToken_(id), name: acc.name, state, units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), inbox: inbox_(acc), mustChange: a.data[ACC.reset] === true };
+  return { ok: true, token: makeToken_(id), name: acc.name, state, units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), inbox: inbox_(acc), mustChange: a.data[ACC.reset] === true };
 }
 function changePassword_(acc, body) {
   const pw = String(body.password || ''); if (pw.length < 4 || pw.length > 30) return fail_('bad_pw', '비밀번호는 4자 이상이에요');
@@ -643,7 +653,7 @@ function doPost(e) {
     switch (a) {
       case 'online': return json_(online_(acc));                         // 교사 전용
       case 'allSummaries': return json_(allSummaries_(acc));             // 교사 전용
-      case 'load': return json_({ ok: true, state: loadState_(acc, true), units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), inbox: inbox_(acc) });
+      case 'load': return json_({ ok: true, state: loadState_(acc, true), units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), inbox: inbox_(acc) });
       case 'cmd': return json_(command_(acc, body.cmd, today));
       case 'grade': {
         const u = loadUnits_().find(x => x.id === (body.topicId || body.unitId)); if (!u) return json_(fail_('no_unit', '성취기준을 찾을 수 없어요'));
@@ -655,7 +665,7 @@ function doPost(e) {
       case 'allow': return json_(allow_(acc, body));
       case 'visit': return json_(visit_(acc, body));
       case 'sticker': return json_(sticker_(acc, body, today));
-      case 'inbox': return json_({ ok: true, inbox: inbox_(acc) });
+      case 'inbox': return json_({ ok: true, inbox: inbox_(acc), settings: publicSettings_() });   // 1분 폴링으로 잠금 설정도 갱신
       case 'questions': return json_(questionsFor_(acc, body));          // 교사 전용
       case 'saveQuestions': return json_(saveQuestions_(acc, body));     // 교사 전용
       case 'coupons': return json_({ ok: true, coupons: loadCoupons_() });
