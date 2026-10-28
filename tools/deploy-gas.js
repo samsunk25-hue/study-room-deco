@@ -27,8 +27,8 @@ const CFG = path.join(ROOT, 'gas', 'clasp.config.json');
 const arg = process.argv[2] || '';
 
 // 1) gas/dist 조립 (서버에 올라가는 파일 = 공용 엔진 + 단원 데이터 + 서버 코드)
-fs.rmSync(DIST, { recursive: true, force: true });
 fs.mkdirSync(DIST, { recursive: true });
+for (const f of fs.readdirSync(DIST)) if (f !== '.clasp.json') fs.rmSync(path.join(DIST, f), { force: true });   // 폴더 자체는 지우지 않음(열려 있으면 EPERM)
 const files = [
   ['gas/Code.gs', 'Code.js'],
   ['js/catalog.js', 'catalog.js'],
