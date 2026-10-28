@@ -12,3 +12,10 @@ gas/*.csv
 firebase-debug.log
 .DS_Store
 Thumbs.db
+
+# Apps Script 자동 배포 (clasp) 작업 파일
+gas/dist/
+gas/clasp.config.json
+.clasp.json
+.clasprc.json
+node_modules/

@@ -32,6 +32,7 @@ const SOCIAL_HEADER = ['시각', '유형', '보낸 학번', '보낸 이름', '�
 const TEACHER_HEADER = ['이메일', '이름', '승인', '등록일'];
 const NIGHT_LOCK = { start: 22, end: 7 };
 const TOKEN_DAYS = 30;
+const SERVER_VERSION = 3;   // 앱이 서버 버전을 확인해 재배포 필요 여부를 안내함 (teacherLogin 8자리 코드 = 3)
 
 /* ======================= 공용 ======================= */
 function ss_() { return SpreadsheetApp.getActiveSpreadsheet(); }
@@ -110,7 +111,7 @@ function teacherLogin_(body) {
   const code = String(body.code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   const raw = code && props_().getProperty('TCODE_' + code);
   let info = null; try { info = raw ? JSON.parse(raw) : null; } catch (e) { info = null; }
-  if (!info || info.exp < Date.now()) return fail_('bad_code', '교사 접속 코드가 올바르지 않거나 만료됐어요. 시트 메뉴 ⑧에서 다시 발급하세요');
+  if (!info || info.exp < Date.now()) return fail_('bad_code', code.length === 8 ? '교사 접속 코드가 맞지 않거나 만료됐어요. 시트 메뉴 ⑧에서 다시 발급해 보세요' : '교사 접속 코드는 8자리예요 (예: AB12-CD34). 시트 메뉴 ⑧에서 발급하세요');
   const acc = account_('T:' + info.email); if (!acc) return fail_('not_teacher', '승인된 교사가 아니에요. 관리자에게 등록을 요청하세요');
   return { ok: true, token: makeToken_(acc.id), id: acc.id, name: acc.name, teacher: true, state: loadState_(acc, false), units: publicUnits_(loadUnits_()), inbox: { knocks: [], stickers: [] } };
 }
@@ -343,7 +344,7 @@ function inbox_(acc) {
 /* ======================= HTTP 진입점 ======================= */
 function doGet(e) {
   const now = kstNow_();
-  return json_({ ok: true, app: 'studyroom', serverTime: now.toISOString(), locked: nightLocked_(now) });
+  return json_({ ok: true, app: 'studyroom', version: SERVER_VERSION, serverTime: now.toISOString(), locked: nightLocked_(now) });
 }
 function doPost(e) {
   let body;

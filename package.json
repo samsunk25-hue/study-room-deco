@@ -1,0 +1,13 @@
+{
+  "name": "study-room-deco",
+  "version": "2.0.0",
+  "private": true,
+  "description": "스터디룸 — 학습 정리하고 내 방 꾸미기 (학생 앱: GitHub Pages / 서버: Google Apps Script)",
+  "scripts": {
+    "server": "node tools/deploy-gas.js",
+    "server:build": "node tools/deploy-gas.js --build",
+    "server:push": "node tools/deploy-gas.js --push",
+    "app": "git add -A && git commit -m \"앱 수정\" && git push",
+    "all": "npm run server && npm run app"
+  }
+}

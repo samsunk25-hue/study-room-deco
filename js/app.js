@@ -186,7 +186,15 @@ async function auth(action, payload) {
   $('#f-go').disabled = true; $('#f-go').textContent = '확인 중...';
   try {
     const r = await API.call(Object.assign({ action }, payload));
-    if (!r.ok) { if (r.error === 'night_lock') { $('#overlay-login').classList.add('hidden'); $('#overlay-lock').classList.remove('hidden'); return; } return renderLogin(mode, r.message || '로그인에 실패했어요'); }
+    if (!r.ok) {
+      if (r.error === 'night_lock') { $('#overlay-login').classList.add('hidden'); $('#overlay-lock').classList.remove('hidden'); return; }
+      let msg = r.message || '로그인에 실패했어요';
+      if (action === 'teacherLogin') {                      // 서버가 예전 버전이면 재배포 안내
+        const t = await API.getTime();
+        if (t && !(t.version >= 3)) msg = '서버(Apps Script)가 예전 버전이라 8자리 교사 코드를 아직 몰라요. Apps Script에서 Code.gs를 최신으로 바꾼 뒤 "배포 → 배포 관리 → 새 버전"을 해 주세요.';
+      }
+      return renderLogin(mode, msg);
+    }
     API.setSession({ token: r.token, id: r.id || payload.id, name: r.name, teacher: !!r.teacher });
     setTopics(r.units); state = Engine.migrate(r.state, units); inbox = r.inbox || inbox;
     $('#overlay-login').classList.add('hidden');

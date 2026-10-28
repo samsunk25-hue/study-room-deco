@@ -45,6 +45,25 @@
 6. 학생용 앱은 GitHub Pages 또는 Firebase Hosting에 올립니다(아래 참고). `js/units.js`는 `.gitignore`/`firebase.json`이 자동으로 제외하므로 정답이 학생 기기로 가지 않습니다. 파일이 없어도 앱은 정상 동작합니다.
 7. 다른 교사를 추가하려면 **⑥ 교사 등록 승인(관리자)** 에 이메일을 입력합니다. 폴더가 공유되고 `교사` 시트에 등록됩니다.
 
+### 서버 자동 배포 (Apps Script 편집기를 열지 않는 방법)
+
+학생 앱(화면·방 꾸미기·문구)은 `git push`만 하면 GitHub Pages가 갱신되고 서버는 건드릴 필요가 없습니다.
+서버 파일(`gas/Code.gs`, `js/catalog.js`, `js/judge.js`, `js/engine.js`, `js/units.js`)을 고쳤을 때만 아래 한 줄로 서버를 갱신합니다.
+
+```
+npm run server
+```
+
+처음 한 번만 준비합니다.
+1. `npm i -g @google/clasp`
+2. https://script.google.com/home/usersettings 에서 **Google Apps Script API** 를 켭니다.
+3. `clasp login` (브라우저에서 구글 로그인)
+4. `gas/clasp.config.json` 파일을 만듭니다. (공개 저장소에는 올라가지 않습니다)
+   ```json
+   { "scriptId": "Apps Script 프로젝트 설정 → 스크립트 ID", "deploymentId": "배포 → 배포 관리 → 배포 ID" }
+   ```
+이후 `npm run server`가 서버 파일 5개를 조립해 Apps Script에 밀어 넣고(push), 기존 배포 ID에 새 버전을 반영하므로 **웹앱 URL은 바뀌지 않습니다.** 앱과 서버를 한 번에 올리려면 `npm run all`.
+
 ### 교사 메뉴
 | 메뉴 | 기능 |
 |---|---|
