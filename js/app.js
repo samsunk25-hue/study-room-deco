@@ -896,6 +896,58 @@ function renderTQuestions(fixed) {
     tAdmin.questions = r.questions.map(q => Object.assign({}, q)); tAdmin.source = r.source; renderTQList();
   }).catch(() => { $('#tq-list').innerHTML = '<p class="muted">연결 실패</p>'; });
 }
+/* 문항 파일·붙여넣기 해석 (CSV / 탭 / | 구분, JSON) */
+function questionTemplateHref() {
+  const rows = [['유형', '질문', '보기1', '보기2', '보기3', '보기4', '정답(번호 또는 단답 정답;정답)', '힌트'],
+    ['객관식', '실험에서 의도적으로 변화시키는 변인은?', '통제 변인', '조작 변인', '종속 변인', '상수', '2', '내가 직접 조작하는 조건이에요'],
+    ['단답형', '탐구 문제에 대한 잠정적인 답을 무엇이라고 하나요?', '', '', '', '', '가설;가설 설정', '"~일 것이다"라고 미리 세우는 답이에요']];
+  const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\r\n');
+  return 'data:text/csv;charset=utf-8,' + encodeURIComponent('\uFEFF' + csv);
+}
+async function readTextFile(f) {
+  const buf = await f.arrayBuffer();
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch (e) { return new TextDecoder('euc-kr').decode(buf); }   // 엑셀 CSV(CP949)도 읽기
+}
+function splitCsvLine(line, d) {
+  if (d !== ',') return line.split(d).map(x => x.trim());
+  const out = []; let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) { const ch = line[i];
+    if (inQ) { if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else inQ = false; } else cur += ch; }
+    else if (ch === '"') inQ = true; else if (ch === ',') { out.push(cur); cur = ''; } else cur += ch; }
+  out.push(cur); return out.map(x => x.trim());
+}
+function parseQuestionText(text) {
+  text = String(text || '').replace(/^\uFEFF/, '').trim(); if (!text) return [];
+  const out = [];
+  const push = q => { if (q && q.q) out.push(q); };
+  if (/^[\[{]/.test(text)) {
+    let j; try { j = JSON.parse(text); } catch (e) { return []; }
+    (Array.isArray(j) ? j : (j.questions || [])).forEach(q => {
+      if (q.type === 'mc' || Array.isArray(q.choices)) { const choices = (q.choices || []).map(String).filter(Boolean); let a = Number(q.answer); if (!(a >= 0 && a < choices.length)) a = Math.max(0, choices.indexOf(String(q.answer))); push({ type: 'mc', q: String(q.q || q.question || ''), choices, answer: a, hint: String(q.hint || '') }); }
+      else push({ type: 'short', q: String(q.q || q.question || ''), answers: [].concat(q.answers || q.answer || []).map(String).filter(Boolean), hint: String(q.hint || '') });
+    });
+    return out;
+  }
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const d = lines[0].includes('\t') ? '\t' : (lines[0].includes('|') ? '|' : ',');
+  lines.forEach(line => {
+    const c = splitCsvLine(line, d); if (c.length < 2) return;
+    if (/유형|질문|^type$/i.test(c[0]) && /질문|question|q/i.test(c[1])) return;   // 머리글
+    const t = c[0]; const q = c[1]; if (!q) return;
+    const isMc = /객관|선택|^mc$|^m$|^1$/i.test(t) || (!/단답|주관|short|^s$|^2$/i.test(t) && c.slice(2, 6).filter(Boolean).length >= 2);
+    if (isMc) {
+      const choices = c.slice(2, 6).filter(Boolean); if (choices.length < 2) return;
+      const ans = (c[6] || '').trim(); let a = -1;
+      if (/^[1-4]$/.test(ans)) a = Number(ans) - 1; else if (/^[①②③④]$/.test(ans)) a = '①②③④'.indexOf(ans); else a = choices.indexOf(ans);
+      if (a < 0 || a >= choices.length) a = 0;
+      push({ type: 'mc', q, choices, answer: a, hint: c[7] || '' });
+    } else {
+      const raw = c[6] || c[2] || ''; const answers = raw.split(/[;；]/).map(x => x.trim()).filter(Boolean);
+      push({ type: 'short', q, answers, hint: c[7] || c[3] || '' });
+    }
+  });
+  return out;
+}
 function renderTQList() {
   const list = tAdmin.questions;
   $('#tq-list').innerHTML = `<p class="muted small">${tAdmin.source === 'sheet' ? '문항 시트에 저장된 문항이에요.' : '아직 문항 시트에 없어서 기본 문항을 보여 줘요. 저장하면 문항 시트에 들어가요.'} 저장 후 5분 안에 학생 화면에 반영돼요.</p>
@@ -905,7 +957,31 @@ function renderTQList() {
         : `<label>정답 (여러 개면 ; 로 구분) <input type="text" data-i="${i}" data-k="answers" value="${esc((q.answers || []).join(';'))}" maxlength="100"></label>`}
       <label>힌트 (틀렸을 때 보여 줄 발판) <input type="text" data-i="${i}" data-k="hint" value="${esc(q.hint || '')}" maxlength="120"></label></div>`).join('')}
     ${list.length ? '' : '<p class="muted small">문항이 없어요. 추가해 보세요.</p>'}
-    <div class="btn-row"><button class="btn" id="tq-add-mc">+ 객관식 추가</button><button class="btn" id="tq-add-short">+ 단답형 추가</button><button class="btn primary" id="tq-save">문항 저장</button></div>`;
+    <div class="btn-row"><button class="btn" id="tq-add-mc">+ 객관식 추가</button><button class="btn" id="tq-add-short">+ 단답형 추가</button><button class="btn primary" id="tq-save">문항 저장</button></div>
+    <div class="row-label" style="margin-top:12px">문항 한꺼번에 추가 <small class="muted">— 추가된 초안은 위 목록에서 고친 뒤 "문항 저장"을 눌러야 저장돼요 · 성취기준당 10개까지</small></div>
+    <div class="btn-row"><button class="btn" id="tq-gen">✨ 자동 생성 <select id="tq-gen-n" style="padding:2px 4px"><option value="3">3개</option><option value="5" selected>5개</option><option value="8">8개</option></select></button><button class="btn" id="tq-file-btn">📄 파일로 추가</button><input type="file" id="tq-file" accept=".csv,.txt,.tsv,.json" class="hidden"><button class="btn" id="tq-paste-btn">📋 붙여넣기로 추가</button><a class="btn" id="tq-template" download="문항서식.csv" href="${questionTemplateHref()}">⬇ 서식 파일</a></div>
+    <p class="muted small">자동 생성은 이 성취기준의 핵심 개념과 본문 문장으로 빈칸·단답 문항 초안을 만들어요(외부 AI를 쓰지 않아요). 파일은 CSV·탭 구분·JSON 모두 되고, 한 줄에 한 문항: <code>유형, 질문, 보기1, 보기2, 보기3, 보기4, 정답(번호), 힌트</code> — 단답형은 보기 칸을 비우고 정답 칸에 정답을 <code>;</code>로 구분해 적어요.</p>
+    <div id="tq-paste" class="hidden"><textarea id="tq-paste-text" rows="5" placeholder="객관식, 실험에서 의도적으로 변화시키는 변인은?, 통제 변인, 조작 변인, 종속 변인, 상수, 2, 내가 직접 조작하는 조건이에요&#10;단답형, 탐구 문제에 대한 잠정적인 답은?, , , , , 가설;가설 설정, 미리 세우는 답이에요"></textarea><div class="btn-row"><button class="btn primary" id="tq-paste-add">목록에 추가</button></div></div>`;
+  const addMany = (qs, label) => {
+    sync();
+    const room = Math.max(0, 10 - list.length);
+    if (!qs.length) return toast('추가할 문항을 찾지 못했어요. 형식을 확인해 주세요', 'bad');
+    if (!room) return toast('문항은 성취기준당 10개까지예요. 먼저 몇 개를 삭제해 주세요', 'bad');
+    const add = qs.slice(0, room); list.push(...add); renderTQList();
+    toast(`${label} 문항 ${add.length}개를 목록에 추가했어요. 확인·수정 후 "문항 저장"을 누르세요${qs.length > add.length ? ` (10개 제한으로 ${qs.length - add.length}개는 뺐어요)` : ''}`, 'ok');
+  };
+  $('#tq-gen').onclick = async () => {
+    const r = await API.call({ action: 'genQuestions', topicId: tAdmin.topicId, count: Number($('#tq-gen-n').value) }).catch(() => ({ ok: false, message: '연결 실패' }));
+    if (r.ok) addMany(r.questions, '자동 생성'); else toast(r.message || '자동 생성에 실패했어요', 'bad');
+  };
+  $('#tq-file-btn').onclick = () => $('#tq-file').click();
+  $('#tq-file').onchange = async () => {
+    const f = $('#tq-file').files[0]; if (!f) return;
+    try { const text = await readTextFile(f); addMany(parseQuestionText(text), '파일'); } catch (e) { toast('파일을 읽지 못했어요: ' + e.message, 'bad'); }
+    $('#tq-file').value = '';
+  };
+  $('#tq-paste-btn').onclick = () => $('#tq-paste').classList.toggle('hidden');
+  $('#tq-paste-add').onclick = () => addMany(parseQuestionText($('#tq-paste-text').value), '붙여넣기');
   const sync = () => {
     $$('#tq-list input[data-i], #tq-list select[data-i]').forEach(el => {
       const q = list[+el.dataset.i], k = el.dataset.k; if (!q) return;

@@ -132,6 +132,38 @@ function seedTest_(acc, body, today) {
   return { ok: true, added, unitId, message: `${sacc.name}(${id})에게 "${picked[0].title}" 단원 성취기준 ${picked.length}개 통과 기록을 넣었어요(새로 ${added}건). 학생이 서재에서 그 단원 개념도 액자를 만들 수 있어요.` };
 }
 
+/* ======================= 문항 자동 생성 (교사 · 규칙 기반, 외부 AI 사용 안 함) ======================= */
+function escRe_(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function shuffle_(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+function sentencesOf_(text) { return String(text || '').replace(/\r/g, '').split(/(?<=[.!?。])\s+|\n+/).map(s => s.trim()).filter(s => s.length > 8); }
+function genQuestions_(acc, body) {
+  if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
+  const id = String(body.topicId || '').trim();
+  const units = loadUnits_(); const u = units.find(x => x.id === id);
+  if (!u) return fail_('no_unit', '성취기준을 찾을 수 없어요');
+  const count = Math.min(10, Math.max(1, Math.round(Number(body.count) || 5)));
+  const sents = sentencesOf_(u.sourceText);
+  const terms = u.keyConcepts.map(c => c.term);
+  const sib = []; units.forEach(x => { if (x.unitId === u.unitId && x.id !== u.id) x.keyConcepts.forEach(c => { if (!terms.includes(c.term) && !sib.includes(c.term)) sib.push(c.term); }); });
+  const isQ = h => /[?？]\s*$|써 보세요|쓰세요|적어 보세요|무엇|이름은/.test(String(h || ''));
+  const mc = [], sh = [];
+  u.keyConcepts.forEach(c => {
+    const sent = sents.find(s => s.includes(c.term));
+    const cloze = sent ? sent.replace(new RegExp(escRe_(c.term), 'g'), '(　　)') : '';
+    const dHint = isQ(c.hint) ? c.hint : (c.hint || '핵심 개념어를 떠올려 보세요.');
+    if (cloze) {
+      const pool = shuffle_(terms.filter(t => t !== c.term)).concat(shuffle_(sib.slice())).slice(0, 3);
+      if (pool.length >= 2) { const choices = shuffle_(pool.concat([c.term])); mc.push({ type: 'mc', q: '빈칸에 알맞은 말은? "' + cloze + '"', choices, answer: choices.indexOf(c.term), hint: dHint }); }
+    }
+    if (isQ(c.hint)) sh.push({ type: 'short', q: c.hint, answers: [c.term], hint: cloze ? '본문: ' + cloze.slice(0, 70) : '핵심 개념어 한 단어로 써 보세요.' });
+    else if (cloze) sh.push({ type: 'short', q: '빈칸에 알맞은 말을 쓰세요. "' + cloze + '"', answers: [c.term], hint: dHint });
+  });
+  const mixed = [];
+  while ((mc.length || sh.length) && mixed.length < count) { if (mc.length) mixed.push(mc.shift()); if (sh.length && mixed.length < count) mixed.push(sh.shift()); }
+  if (!mixed.length) return fail_('empty', '이 성취기준에는 자동 생성에 쓸 핵심 개념·본문이 부족해요');
+  return { ok: true, questions: mixed };
+}
+
 /* ======================= 코인 일괄 지급 (교사) ======================= */
 function grantCoins_(acc, body) {
   if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
@@ -802,6 +834,7 @@ function doPost(e) {
       case 'unitStats': return json_(unitStats_(acc));                   // 교사 전용
       case 'seedTest': return json_(seedTest_(acc, body, today));          // 교사 전용 (테스트 자료)
       case 'grantCoins': return json_(grantCoins_(acc, body));           // 교사 전용 (코인 일괄 지급)
+      case 'genQuestions': return json_(genQuestions_(acc, body));       // 교사 전용 (문항 자동 생성 초안)
       case 'saveItemPrices': return json_(saveItemPrices_(acc, body));   // 교사 전용 (가구별 가격)
       case 'allSummaries': return json_(allSummaries_(acc));             // 교사 전용
       case 'load': return json_({ ok: true, state: loadState_(acc, true), units: publicUnits_(loadUnits_()), coupons: loadCoupons_(), events: loadEvents_(), settings: publicSettings_(), items: loadItems_(), inbox: inbox_(acc) });
