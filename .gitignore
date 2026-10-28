@@ -1,0 +1,14 @@
+# 정답·핵심 개념이 들어 있는 단원 파일 — 공개 저장소/호스팅에 올리지 않음 (서버의 단원 시트가 대신함)
+js/units.js
+gas/*.csv
+
+# 기획서 등 내부 문서
+*.docx
+*.hwp
+*.pdf
+
+# Firebase / 편집기
+.firebase/
+firebase-debug.log
+.DS_Store
+Thumbs.db

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<!-- 학생 데이터는 GAS 서버로만 전송: 그 외 주소로의 네트워크 요청을 브라우저가 차단 -->
+<meta http-equiv="Content-Security-Policy" content="connect-src https://script.google.com https://script.googleusercontent.com; form-action 'none'; object-src 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<title>스터디룸 — 학습 정리하고 내 방 꾸미기</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">🏠 스터디룸</div>
+  <nav class="tabs">
+    <button class="tab active" data-screen="room">🛋️ 내 방</button>
+    <button class="tab" data-screen="study">📝 학습하기</button>
+    <button class="tab" data-screen="library">📚 서재</button>
+    <button class="tab" data-screen="friends" id="tab-friends">🚪 친구 방</button>
+    <button class="tab" data-screen="shop">🛒 상점</button>
+    <button class="tab" data-screen="teacher">🍎 교사</button>
+  </nav>
+  <div class="status">
+    <span id="sync-pill" class="pill hidden"></span>
+    <span id="event-badge" class="badge hidden"></span>
+    <span id="coin-display" class="coin">🪙 0</span>
+    <span id="user-display" class="user"></span>
+    <button id="logout-btn" class="btn tiny hidden" title="로그아웃">나가기</button>
+  </div>
+</header>
+
+<main>
+  <!-- ===== 내 방 ===== -->
+  <section id="screen-room" class="screen active">
+    <div id="room-tabs" class="room-tabs"></div>
+    <div class="room-layout">
+      <div class="room-wrap">
+        <div id="lock-banner" class="banner hidden">🔒 수업 시간에는 인테리어가 잠겨요. 지금은 학습하기만 할 수 있어요.</div>
+        <canvas id="room-canvas" width="820" height="450"></canvas>
+        <div class="room-hint">가구를 끌어서 옮기고, 선택한 뒤 <b>R</b> 키로 회전할 수 있어요. 단원마다 방이 따로 있어요.</div>
+      </div>
+      <aside id="room-panel" class="panel">
+        <div id="inbox-card" class="card inbox hidden"></div>
+        <div id="selected-tools" class="card hidden"></div>
+        <div id="monster-card" class="card monster hidden"></div>
+        <div id="synergy-list" class="card hidden"></div>
+        <div class="card">
+          <h3>📦 보관함 <small id="inv-count"></small></h3>
+          <div id="inventory-list" class="inv-grid"></div>
+        </div>
+        <div class="card">
+          <h3>🎨 방 꾸미기</h3>
+          <div class="row-label">벽지 <small>(🪙 <span class="wallpaper-cost"></span>)</small></div>
+          <div id="wall-colors" class="swatches"></div>
+          <div class="row-label">바닥 <small>(🪙 <span class="wallpaper-cost"></span>)</small></div>
+          <div id="floor-colors" class="swatches"></div>
+        </div>
+        <div class="card">
+          <h3>🚪 방 공개 설정</h3>
+          <select id="privacy-select">
+            <option value="open">🟢 항상 열어두기</option>
+            <option value="knock">🟡 노크 필요 (기본)</option>
+            <option value="private">🔴 나만 보기</option>
+          </select>
+          <p class="muted small">친구에게는 방 모습과 <b>통과한 요약(학습자료)</b>만 보여요. 점수·시도 횟수·먼지 괴물·승인 전 사진은 절대 보이지 않아요.</p>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <section id="screen-study" class="screen"><div id="study-body" class="study"></div></section>
+  <section id="screen-library" class="screen"><div id="library-body" class="library"></div></section>
+  <section id="screen-friends" class="screen"><div id="friends-body" class="friends"></div></section>
+  <section id="screen-shop" class="screen"><div id="shop-body" class="shop"></div></section>
+  <section id="screen-teacher" class="screen"><div id="teacher-body" class="teacher"></div></section>
+</main>
+
+<!-- 로그인 / 가입 -->
+<div id="overlay-login" class="overlay hidden">
+  <div class="modal" id="login-body"></div>
+</div>
+
+<!-- 심야 잠금 -->
+<div id="overlay-lock" class="overlay hidden">
+  <div class="modal center">
+    <div class="npc">😴</div>
+    <h2>지금은 쿨쿨 잘 시간이에요!</h2>
+    <p>내일 아침 7시에 만나요 🌙</p>
+    <p class="muted small">스터디룸은 밤 10시부터 아침 7시까지 쉬어요. (서버 시간 기준)</p>
+  </div>
+</div>
+
+<!-- AI 판정 로딩 -->
+<div id="overlay-loading" class="overlay hidden">
+  <div class="loading-stage">
+    <div id="loading-stream" class="stream"></div>
+    <div class="loading-card">
+      <div class="spinner">🤖</div>
+      <div id="loading-text">AI 조교가 교과서를 확인 중...</div>
+      <div class="muted small">기다리는 동안 친구들의 우수 요약을 읽어 보세요</div>
+    </div>
+  </div>
+</div>
+
+<!-- 가구 상자 -->
+<div id="overlay-box" class="overlay hidden"><div id="box-stage" class="modal center"></div></div>
+
+<!-- 범용 모달 (사진 동의, 비밀번호 변경 등) -->
+<div id="overlay-modal" class="overlay hidden"><div id="modal-body" class="modal"></div></div>
+
+<div id="toast"></div>
+
+<script src="js/catalog.js"></script>
+<script src="js/units.js"></script>
+<script src="js/judge.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/api.js"></script>
+<script src="js/room.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
