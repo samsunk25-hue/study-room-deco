@@ -280,3 +280,9 @@ body.teacher #monster-card, body.teacher #synergy-list, body.teacher #inbox-card
   .room-hint { margin-top: 4px; font-size: 0.8rem; }
   #room-canvas { max-height: calc(100vh - 230px); width: auto; max-width: 100%; margin: 0 auto; }
 }
+/* 상단 바가 두 줄로 접히지 않도록: 중간 폭에서는 사용자 이름을 줄임 */
+@media (max-width: 1180px) {
+  .user { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .brand { font-size: 1.05rem; }
+}
