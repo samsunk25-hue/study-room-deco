@@ -469,7 +469,7 @@ function renderStudy() {
   if (study.step === 'quiz') {
     body.innerHTML = `<div class="card">${steps('quiz')}<div class="subject muted small">${esc(u.subject)} · ${esc(u.title)}</div><h2>${esc(t.code || '')} 형성평가</h2>
       <div class="standard">🎯 ${esc(t.standard.split('\n')[0])}</div>
-      ${t.questions.map((q, i) => `<div class="q" data-i="${i}" style="margin-top:12px"><div class="qt">Q${i + 1}. ${esc(q.q)}</div>
+      ${t.questions.map((q, i) => `<div class="q" data-i="${i}" style="margin-top:12px"><div class="qt">Q${i + 1}. ${esc(q.q)}</div>${q.img ? `<div class="qimg" data-fid="${esc(q.img)}"><img alt="문제 그림" style="max-width:100%;max-height:360px;border-radius:10px;margin:6px 0;display:none"><span class="muted small">그림 불러오는 중...</span></div>` : ''}
         ${q.type === 'mc' ? `<div class="choices">${q.choices.map((c, j) => `<label class="choice"><input type="radio" name="q${i}" value="${j}" ${study.graded ? 'disabled' : ''} ${study.answers[i] == j ? 'checked' : ''}><span>${esc(c)}</span></label>`).join('')}</div>`
           : `<input type="text" class="short" data-i="${i}" placeholder="답을 입력하세요" value="${esc(study.answers[i] || '')}" ${study.graded ? 'disabled' : ''}>`}
         <div class="feedback" id="fb${i}"></div></div>`).join('')}
@@ -478,6 +478,7 @@ function renderStudy() {
         <button class="btn ghost" id="btn-back">← 성취기준 선택</button>
         </div></div>${isTeacher() ? '<div class="card" id="t-questions" style="background:#eef6ff"></div>' : ''}`;
     $('#btn-back').onclick = () => { study = { step: 'topics', unit: u }; renderStudy(); };
+    loadQuestionImages($('#study-body'));
     if (isTeacher()) { tAdmin.unitId = u.id; tAdmin.topicId = t.id; renderTQuestions(true); }   // 교사: 형성평가 아래에 이 성취기준의 문항 편집기
     if (study.graded) { showQuizFeedback(); $('#btn-next').onclick = () => { study.step = 'summary'; renderStudy(); }; }
     else $('#btn-grade').onclick = async () => {
@@ -973,6 +974,100 @@ function splitCsvLine(line, d) {
     else if (ch === '"') inQ = true; else if (ch === ',') { out.push(cur); cur = ''; } else cur += ch; }
   out.push(cur); return out.map(x => x.trim());
 }
+/* 시험지 형식: "1. 질문 / ① 보기 ② 보기 … / 정답: ② / 힌트: …" 블록들 */
+function parseExamText(text) {
+  const lines = String(text || '').replace(/\r/g, '').split('\n').map(l => l.replace(/\s+$/, ''));
+  const circ = '①②③④⑤⑥';
+  const qNum = l => { const m = l.match(/^\s*(?:문제\s*|문\s*)?(?:Q\s*)?(\d{1,2})\s*[.)]\s*\S/); return m ? Number(m[1]) : null; };
+  const blocks = []; let cur = null, expected = 1, choiceNext = 1;   // 보기 번호(1) 2) 3) 4) 순서)와 문항 번호를 구분
+  for (const raw of lines) {
+    const l = raw.trim();
+    if (!l) { if (cur && cur.length) { blocks.push(cur); cur = null; } continue; }
+    const n = qNum(l);
+    if (n !== null && cur && cur.length && n === choiceNext && n <= 6) {   // 1), 2), 3)… 이어지는 보기
+      choiceNext += (l.match(/(?:^|\s)\(?[1-6]\s*[.)]\s/g) || []).length || 1; cur.push(l); continue;
+    }
+    if (n !== null && cur && cur.length && (n === expected || n === expected + 1)) { blocks.push(cur); cur = null; }
+    if (n !== null && !cur) { expected = n + 1; choiceNext = 1; }
+    (cur = cur || []).push(l);
+  }
+  if (cur && cur.length) blocks.push(cur);
+  const out = [];
+  for (const b of blocks) {
+    let q = b[0].replace(/^\s*(?:문제\s*|문\s*)?(?:Q\s*)?\d{1,2}\s*[.)]\s*/, '').trim();
+    const choices = []; let answer = null, hint = '';
+    for (const l of b.slice(1)) {
+      let m;
+      if ((m = l.match(/^(?:정답|답|answer)\s*[:：]?\s*(.+)$/i))) { answer = m[1].trim(); continue; }
+      if ((m = l.match(/^(?:힌트|해설|풀이|hint)\s*[:：]?\s*(.+)$/i))) { hint = m[1].trim(); continue; }
+      if (/[①②③④⑤⑥]/.test(l)) { l.split(/(?=[①②③④⑤⑥])/).map(x => x.replace(/^[①②③④⑤⑥]\s*/, '').trim()).filter(Boolean).forEach(x => choices.push(x)); continue; }
+      if (/^\(?[1-6a-fA-F가-바ㄱ-ㅂ]\s*[.)]\s*\S/.test(l)) { l.split(/\s+(?=\(?[1-6a-fA-F가-바ㄱ-ㅂ]\s*[.)]\s)/).map(x => x.replace(/^\(?[1-6a-fA-F가-바ㄱ-ㅂ]\s*[.)]\s*/, '').trim()).filter(Boolean).forEach(x => choices.push(x)); continue; }
+      if (!choices.length && answer === null) q += ' ' + l;   // 질문이 여러 줄
+    }
+    q = q.trim(); if (!q) continue;
+    if (choices.length >= 2) {
+      const cs = choices.slice(0, 4); let a = -1; const ans = String(answer || '').trim();
+      if (circ.includes(ans[0])) a = circ.indexOf(ans[0]); else if (/^[1-4]$/.test(ans)) a = Number(ans) - 1; else if (/^[a-dA-D]$/.test(ans)) a = ans.toLowerCase().charCodeAt(0) - 97; else if (/^[가나다라]$/.test(ans)) a = '가나다라'.indexOf(ans); else if (/^[ㄱㄴㄷㄹ]$/.test(ans)) a = 'ㄱㄴㄷㄹ'.indexOf(ans); else a = cs.findIndex(c => c.replace(/\s/g, '') === ans.replace(/\s/g, ''));
+      if (a < 0 || a >= cs.length) continue;   // 정답을 못 찾은 객관식은 건너뜀
+      out.push({ type: 'mc', q, choices: cs, answer: a, hint });
+    } else if (answer) {
+      out.push({ type: 'short', q, answers: answer.split(/[,;/、]/).map(x => x.trim()).filter(Boolean), hint });
+    }
+  }
+  return out;
+}
+/* OCR 결과 다듬기: 흔한 오인식 교정 */
+function tidyOcrText(t) {
+  const circ = '①②③④⑤⑥';
+  const marker = /(^|\s)(?:[@©®⊙◎○◯●Ⓐ-Ⓩⓐ-ⓩ]|[\(（]\s*[1-6]\s*[\)）]|[1-6]\s*[\)）.]|[1-6](?=\s+[가-힣A-Za-z]))\s*/g;   // OCR 이 ①②③④ 를 @, (2), 2) 등으로 읽은 것
+  const lines = String(t || '').replace(/\r/g, '').split('\n').map(l => l.replace(/[|丨]/g, '').trim());
+  const out = lines.map(l => {
+    if (/^(정답|답)\s*[:：]/.test(l)) return l.replace(/^(정답|답)\s*[:：]?\s*[\(（]?\s*([1-6])\s*[\)）]?\s*$/, (m, a, n) => '정답: ' + circ[Number(n) - 1]);
+    const cnt = (l.match(marker) || []).length;
+    if (cnt >= 3 && !/^\d{1,2}\s*[.)]\s/.test(l)) { let k = 0; return l.replace(marker, (m, pre) => (k < 6 ? pre + circ[k++] + ' ' : m)).trim(); }
+    return l;
+  });
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+/* 그림 파일 → 글자 (Tesseract.js, 이 기기에서 처리. 라이브러리와 한글 인식 파일만 CDN에서 내려받음) */
+let tessPromise = null;
+function loadTesseract() {
+  if (window.Tesseract) return Promise.resolve();
+  if (!tessPromise) tessPromise = new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js'; s.onload = res; s.onerror = () => rej(new Error('글자 인식 라이브러리를 내려받지 못했어요 (인터넷 확인)')); document.head.appendChild(s); });
+  return tessPromise;
+}
+async function ocrImageFile(file, onProgress) {
+  await loadTesseract();
+  const dataUrl = await fileToJpeg(file, 1800, 2500000);
+  const worker = await Tesseract.createWorker('kor+eng', 1, { logger: m => { if (m.status === 'recognizing text' && onProgress) onProgress(Math.round((m.progress || 0) * 100)); } });
+  try { const r = await worker.recognize(dataUrl); return r.data.text || ''; } finally { worker.terminate(); }
+}
+/* 그림 파일 → 축소 JPEG data URL (긴 변 max px, 길이 maxChars 이하) */
+function fileToJpeg(file, max, maxChars) {
+  return new Promise((res, rej) => {
+    if (!/^image\//.test(file.type)) return rej(new Error('이미지 파일(jpg, png)만 돼요'));
+    const rd = new FileReader();
+    rd.onerror = () => rej(new Error('파일을 읽지 못했어요'));
+    rd.onload = () => { const im = new Image(); im.onerror = () => rej(new Error('그림을 열지 못했어요')); im.onload = () => {
+      const r = Math.min(1, max / Math.max(im.width, im.height)); const cv = document.createElement('canvas'); cv.width = Math.round(im.width * r); cv.height = Math.round(im.height * r);
+      const c = cv.getContext('2d'); c.fillStyle = '#fff'; c.fillRect(0, 0, cv.width, cv.height); c.drawImage(im, 0, 0, cv.width, cv.height);
+      let q = 0.85, out = cv.toDataURL('image/jpeg', q); while (out.length > maxChars && q > 0.3) { q -= 0.1; out = cv.toDataURL('image/jpeg', q); }
+      res(out); }; im.src = rd.result; };
+    rd.readAsDataURL(file);
+  });
+}
+/* 문항 그림 불러오기 (서버 'qimg', 메모리 캐시) */
+const qimgCache = {};
+function loadQuestionImages(root) {
+  if (!root) return;
+  Array.from(root.querySelectorAll('.qimg')).forEach(async box => {
+    const fid = box.dataset.fid; const img = box.querySelector('img'); const note = box.querySelector('span');
+    try {
+      if (!qimgCache[fid]) { if (MODE !== 'server') throw new Error('local'); const r = await API.call({ action: 'qimg', fileId: fid }); if (!r.ok) throw new Error(r.message || 'x'); qimgCache[fid] = r.data; }
+      img.src = qimgCache[fid]; img.style.display = ''; if (note) note.remove();
+    } catch (e) { if (note) note.textContent = '그림을 불러오지 못했어요'; }
+  });
+}
 function parseQuestionText(text) {
   text = String(text || '').replace(/^\uFEFF/, '').trim(); if (!text) return [];
   const out = [];
@@ -1003,6 +1098,7 @@ function parseQuestionText(text) {
       push({ type: 'short', q, answers, hint: c[7] || c[3] || '' });
     }
   });
+  if (!out.length || !lines.some(l => l.includes(d) && (d !== ',' || l.split(',').length >= 4))) { const ex = parseExamText(text); if (ex.length >= out.length) return ex; }
   return out;
 }
 function renderTQList() {
@@ -1012,13 +1108,16 @@ function renderTQList() {
       <label>질문 <input type="text" data-i="${i}" data-k="q" value="${esc(q.q)}" maxlength="200"></label>
       ${q.type === 'mc' ? `<div class="row-label">보기 (정답에 ● 표시)</div>${[0, 1, 2, 3].map(j => `<div style="display:flex;gap:6px;align-items:center;margin:4px 0"><input type="radio" name="ans${i}" value="${j}" ${q.answer === j ? 'checked' : ''}><input type="text" data-i="${i}" data-k="c${j}" value="${esc((q.choices || [])[j] || '')}" placeholder="보기 ${j + 1}" maxlength="60"></div>`).join('')}`
         : `<label>정답 (여러 개면 ; 로 구분) <input type="text" data-i="${i}" data-k="answers" value="${esc((q.answers || []).join(';'))}" maxlength="100"></label>`}
-      <label>힌트 (틀렸을 때 보여 줄 발판) <input type="text" data-i="${i}" data-k="hint" value="${esc(q.hint || '')}" maxlength="120"></label></div>`).join('')}
+      <label>힌트 (틀렸을 때 보여 줄 발판) <input type="text" data-i="${i}" data-k="hint" value="${esc(q.hint || '')}" maxlength="120"></label>
+      <div class="field-row" style="align-items:center"><span class="small"><b>🖼️ 그림</b></span>${q.imgData ? `<img src="${q.imgData}" alt="" style="height:56px;border-radius:8px">` : (q.img ? `<span class="qimg" data-fid="${esc(q.img)}"><img alt="" style="height:56px;border-radius:8px;display:none"><span class="muted small">불러오는 중...</span></span>` : '<span class="muted small">없음</span>')}<button class="btn tiny tq-img" data-i="${i}">${q.img || q.imgData ? '바꾸기' : '그림 넣기'}</button>${q.img || q.imgData ? `<button class="btn tiny danger tq-img-del" data-i="${i}">그림 삭제</button>` : ''}</div></div>`).join('')}
+    <input type="file" id="tq-imgfile" accept="image/*" class="hidden">
     ${list.length ? '' : '<p class="muted small">문항이 없어요. 추가해 보세요.</p>'}
     <div class="btn-row"><button class="btn" id="tq-add-mc">+ 객관식 추가</button><button class="btn" id="tq-add-short">+ 단답형 추가</button><button class="btn primary" id="tq-save">문항 저장</button></div>
     <div class="row-label" style="margin-top:12px">문항 한꺼번에 추가 <small class="muted">— 추가된 초안은 위 목록에서 고친 뒤 "문항 저장"을 눌러야 저장돼요 · 성취기준당 10개까지</small></div>
-    <div class="btn-row"><button class="btn" id="tq-gen">✨ 자동 생성 <select id="tq-gen-n" style="padding:2px 4px"><option value="3">3개</option><option value="5" selected>5개</option><option value="8">8개</option></select></button><button class="btn" id="tq-file-btn">📄 파일로 추가</button><input type="file" id="tq-file" accept=".csv,.txt,.tsv,.json" class="hidden"><button class="btn" id="tq-paste-btn">📋 붙여넣기로 추가</button><a class="btn" id="tq-template" download="문항서식.csv" href="${questionTemplateHref()}">⬇ 서식 파일</a></div>
-    <p class="muted small">자동 생성은 이 성취기준의 핵심 개념과 본문 문장으로 빈칸·단답 문항 초안을 만들어요(외부 AI를 쓰지 않아요). 파일은 CSV·탭 구분·JSON 모두 되고, 한 줄에 한 문항: <code>유형, 질문, 보기1, 보기2, 보기3, 보기4, 정답(번호), 힌트</code> — 단답형은 보기 칸을 비우고 정답 칸에 정답을 <code>;</code>로 구분해 적어요.</p>
-    <div id="tq-paste" class="hidden"><textarea id="tq-paste-text" rows="5" placeholder="객관식, 실험에서 의도적으로 변화시키는 변인은?, 통제 변인, 조작 변인, 종속 변인, 상수, 2, 내가 직접 조작하는 조건이에요&#10;단답형, 탐구 문제에 대한 잠정적인 답은?, , , , , 가설;가설 설정, 미리 세우는 답이에요"></textarea><div class="btn-row"><button class="btn primary" id="tq-paste-add">목록에 추가</button></div></div>`;
+    <div class="btn-row"><button class="btn" id="tq-gen">✨ 자동 생성 <select id="tq-gen-n" style="padding:2px 4px"><option value="3">3개</option><option value="5" selected>5개</option><option value="8">8개</option></select></button><button class="btn" id="tq-file-btn">📄 파일로 추가</button><input type="file" id="tq-file" accept=".csv,.txt,.tsv,.json,image/*" class="hidden"><button class="btn" id="tq-paste-btn">📋 붙여넣기로 추가</button><a class="btn" id="tq-template" download="문항서식.csv" href="${questionTemplateHref()}">⬇ 서식 파일</a></div>
+    <p class="muted small">자동 생성은 이 성취기준의 핵심 개념과 본문 문장으로 빈칸·단답 문항 초안을 만들어요(외부 AI를 쓰지 않고, 이미 목록에 있는 문항은 다시 만들지 않아요). <b>파일로 추가</b>는 CSV·탭·JSON 문항 파일 또는 <b>시험지 사진·그림</b>(jpg, png)을 받아요. 그림은 이 기기에서 글자를 읽어(OCR) 붙여넣기 칸에 넣어 주니 확인 후 추가하면 돼요.</p>
+    <div id="tq-paste" class="hidden"><div class="notice small"><b>붙여넣기 사용법</b> — 한글 문서·시험지에서 복사한 글을 그대로 붙여 넣으면 돼요. 문항마다 <b>번호. 질문</b> → <b>① ② ③ ④ 보기</b>(또는 1) 2) 3) 4), 한 줄에 여러 개 가능) → <b>정답: ②</b> → <b>힌트: ...</b>(선택) 순서로 쓰고, 보기가 없으면 <b>정답: 가설, 가설 설정</b>처럼 쓰면 단답형이 돼요. 문항 사이는 빈 줄로 띄워요. 표 형식(CSV·탭)도 돼요. <button class="link" id="tq-example">예시 넣어 보기</button></div>
+      <textarea id="tq-paste-text" rows="8" placeholder="1. 실험에서 의도적으로 변화시키는 변인은?&#10;① 통제 변인 ② 조작 변인 ③ 종속 변인 ④ 상수&#10;정답: ②&#10;힌트: 내가 직접 조작하는 조건이에요&#10;&#10;2. 탐구 문제에 대한 잠정적인 답을 무엇이라고 하나요?&#10;정답: 가설, 가설 설정"></textarea><div class="btn-row"><button class="btn primary" id="tq-paste-add">목록에 추가</button></div></div>`;
   const addMany = (qs, label) => {
     sync();
     const room = Math.max(0, 10 - list.length);
@@ -1028,16 +1127,29 @@ function renderTQList() {
     toast(`${label} 문항 ${add.length}개를 목록에 추가했어요. 확인·수정 후 "문항 저장"을 누르세요${qs.length > add.length ? ` (10개 제한으로 ${qs.length - add.length}개는 뺐어요)` : ''}`, 'ok');
   };
   $('#tq-gen').onclick = async () => {
-    const r = await API.call({ action: 'genQuestions', topicId: tAdmin.topicId, count: Number($('#tq-gen-n').value) }).catch(() => ({ ok: false, message: '연결 실패' }));
+    sync();
+    const r = await API.call({ action: 'genQuestions', topicId: tAdmin.topicId, count: Number($('#tq-gen-n').value), exclude: list.map(q => q.q) }).catch(() => ({ ok: false, message: '연결 실패' }));
     if (r.ok) addMany(r.questions, '자동 생성'); else toast(r.message || '자동 생성에 실패했어요', 'bad');
   };
   $('#tq-file-btn').onclick = () => $('#tq-file').click();
   $('#tq-file').onchange = async () => {
     const f = $('#tq-file').files[0]; if (!f) return;
+    if (/^image\//.test(f.type)) {
+      $('#tq-paste').classList.remove('hidden');
+      const ta = $('#tq-paste-text'); ta.value = ''; ta.placeholder = '그림에서 글자를 읽는 중이에요... (처음에는 한글 인식 파일을 내려받느라 20~40초 걸릴 수 있어요)';
+      try { const text = await ocrImageFile(f, p => { ta.placeholder = '글자 읽는 중... ' + p + '%'; });
+        ta.value = tidyOcrText(text); ta.placeholder = '';
+        const got = parseQuestionText(ta.value).length;
+        toast(got ? `글자를 읽어 문항 ${got}개를 찾았어요. 아래 내용을 확인·수정한 뒤 "목록에 추가"를 누르세요` : '글자는 읽었지만 문항 형식을 찾지 못했어요. 아래 글을 시험지 형식으로 고친 뒤 "목록에 추가"를 누르세요', got ? 'ok' : 'bad');
+        ta.scrollIntoView({ block: 'center' });
+      } catch (e) { ta.placeholder = ''; toast('그림에서 글자를 읽지 못했어요: ' + e.message, 'bad'); }
+      $('#tq-file').value = ''; return;
+    }
     try { const text = await readTextFile(f); addMany(parseQuestionText(text), '파일'); } catch (e) { toast('파일을 읽지 못했어요: ' + e.message, 'bad'); }
     $('#tq-file').value = '';
   };
   $('#tq-paste-btn').onclick = () => $('#tq-paste').classList.toggle('hidden');
+  $('#tq-example').onclick = () => { $('#tq-paste-text').value = '1. 실험에서 의도적으로 변화시키는 변인은?\n① 통제 변인 ② 조작 변인 ③ 종속 변인 ④ 상수\n정답: ②\n힌트: 내가 직접 조작하는 조건이에요\n\n2. 탐구 문제에 대한 잠정적인 답을 무엇이라고 하나요?\n정답: 가설, 가설 설정\n힌트: "~일 것이다"라고 미리 세우는 답이에요'; };
   $('#tq-paste-add').onclick = () => addMany(parseQuestionText($('#tq-paste-text').value), '붙여넣기');
   const sync = () => {
     $$('#tq-list input[data-i], #tq-list select[data-i]').forEach(el => {
@@ -1050,6 +1162,13 @@ function renderTQList() {
   };
   $$('#tq-list select[data-k=type]').forEach(s => s.onchange = () => { sync(); const q = list[+s.dataset.i]; q.type = s.value; if (q.type === 'mc') { q.choices = q.choices || ['', '', '', '']; q.answer = q.answer || 0; } else q.answers = q.answers || []; renderTQList(); });
   $$('.tq-del').forEach(b => b.onclick = () => { sync(); list.splice(+b.dataset.i, 1); renderTQList(); });
+  $$('.tq-img').forEach(b => b.onclick = () => { sync(); const fi = $('#tq-imgfile'); fi.dataset.i = b.dataset.i; fi.value = ''; fi.click(); });
+  $$('.tq-img-del').forEach(b => b.onclick = () => { sync(); const q = list[+b.dataset.i]; q.img = ''; q.imgData = ''; renderTQList(); });
+  $('#tq-imgfile').onchange = async () => {
+    const fi = $('#tq-imgfile'); const f = fi.files[0]; const q = list[+fi.dataset.i]; if (!f || !q) return;
+    try { q.imgData = await fileToJpeg(f, 900, 300000); q.img = ''; renderTQList(); toast('그림을 넣었어요. "문항 저장"을 눌러야 저장돼요'); } catch (e) { toast('그림을 읽지 못했어요: ' + e.message, 'bad'); }
+  };
+  loadQuestionImages($('#tq-list'));
   $('#tq-add-mc').onclick = () => { sync(); list.push({ type: 'mc', q: '', choices: ['', '', '', ''], answer: 0, hint: '' }); renderTQList(); };
   $('#tq-add-short').onclick = () => { sync(); list.push({ type: 'short', q: '', answers: [], hint: '' }); renderTQList(); };
   $('#tq-save').onclick = async () => {
@@ -1060,11 +1179,11 @@ function renderTQList() {
         const kept = (q.choices || []).map((c, j) => ({ c: String(c || '').trim(), j })).filter(x => x.c);
         const answer = kept.findIndex(x => x.j === q.answer);
         if (q.q.trim() && answer < 0) return toast(`"${q.q.slice(0, 15)}…" 문항의 정답 보기가 비어 있어요`, 'bad');
-        payload.push({ type: 'mc', q: q.q, choices: kept.map(x => x.c), answer, hint: q.hint });
-      } else payload.push({ type: 'short', q: q.q, answers: q.answers || [], hint: q.hint });
+        payload.push({ type: 'mc', q: q.q, choices: kept.map(x => x.c), answer, hint: q.hint, img: q.img || '', imgData: q.imgData || '' });
+      } else payload.push({ type: 'short', q: q.q, answers: q.answers || [], hint: q.hint, img: q.img || '', imgData: q.imgData || '' });
     }
     const r = await API.call({ action: 'saveQuestions', topicId: tAdmin.topicId, questions: payload }).catch(() => ({ ok: false, message: '연결 실패' }));
-    if (r.ok) { toast(`문항 ${r.count}개를 저장했어요`, 'ok'); tAdmin.source = 'sheet'; const t = topicOf(tAdmin.topicId); if (t) t.questions = payload.filter(q => q.q.trim()).map(q => ({ type: q.type, q: q.q, choices: q.choices })); if (study.step === 'quiz' && study.topic && study.topic.id === tAdmin.topicId) { study.answers = {}; study.graded = false; renderStudy(); } }
+    if (r.ok) { toast(`문항 ${r.count}개를 저장했어요`, 'ok'); tAdmin.source = 'sheet'; if (Array.isArray(r.questions)) { tAdmin.questions = r.questions.map(q => Object.assign({}, q)); renderTQList(); } const t = topicOf(tAdmin.topicId); if (t) t.questions = (Array.isArray(r.questions) ? r.questions : payload.filter(q => q.q.trim())).map(q => ({ type: q.type, q: q.q, choices: q.choices, img: q.img || '' })); if (study.step === 'quiz' && study.topic && study.topic.id === tAdmin.topicId) { study.answers = {}; study.graded = false; renderStudy(); } }
     else toast(r.message || '저장에 실패했어요', 'bad');
   };
 }

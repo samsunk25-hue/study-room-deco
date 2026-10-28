@@ -24,7 +24,7 @@
 
 const SHEETS = { accounts: '학생계정', teachers: '교사', units: '단원', questions: '문항', records: '평가기록부', approvals: '승인요청', past: '지난계정', social: '소셜' };
 // 문항 시트: 한 행 = 문항 하나. 성취기준ID 는 단원 시트의 단원ID(예: sci2_14_02). 이 시트에 행이 있는 성취기준은 단원 시트의 문항 칸 대신 이 행들을 사용
-const QUESTION_HEADER = ['성취기준ID', '유형(객관식/단답형)', '질문', '보기1', '보기2', '보기3', '보기4', '정답(객관식: 번호 1~4 / 단답형: 정답1;정답2)', '힌트', '사용'];
+const QUESTION_HEADER = ['성취기준ID', '유형(객관식/단답형)', '질문', '보기1', '보기2', '보기3', '보기4', '정답(객관식: 번호 1~4 / 단답형: 정답1;정답2)', '힌트', '사용', '그림파일ID'];
 const COUPON_HEADER = ['쿠폰ID', '이름', '코인', '설명', '사용'];
 SHEETS.coupons = '쿠폰';
 
@@ -142,6 +142,8 @@ function genQuestions_(acc, body) {
   const units = loadUnits_(); const u = units.find(x => x.id === id);
   if (!u) return fail_('no_unit', '성취기준을 찾을 수 없어요');
   const count = Math.min(10, Math.max(1, Math.round(Number(body.count) || 5)));
+  const norm = s => String(s || '').replace(/\s+/g, '').toLowerCase();
+  const have = new Set((Array.isArray(body.exclude) ? body.exclude : []).map(norm).filter(Boolean));
   const sents = sentencesOf_(u.sourceText);
   const terms = u.keyConcepts.map(c => c.term);
   const sib = []; units.forEach(x => { if (x.unitId === u.unitId && x.id !== u.id) x.keyConcepts.forEach(c => { if (!terms.includes(c.term) && !sib.includes(c.term)) sib.push(c.term); }); });
@@ -158,10 +160,11 @@ function genQuestions_(acc, body) {
     if (isQ(c.hint)) sh.push({ type: 'short', q: c.hint, answers: [c.term], hint: cloze ? '본문: ' + cloze.slice(0, 70) : '핵심 개념어 한 단어로 써 보세요.' });
     else if (cloze) sh.push({ type: 'short', q: '빈칸에 알맞은 말을 쓰세요. "' + cloze + '"', answers: [c.term], hint: dHint });
   });
-  const mixed = [];
-  while ((mc.length || sh.length) && mixed.length < count) { if (mc.length) mixed.push(mc.shift()); if (sh.length && mixed.length < count) mixed.push(sh.shift()); }
-  if (!mixed.length) return fail_('empty', '이 성취기준에는 자동 생성에 쓸 핵심 개념·본문이 부족해요');
-  return { ok: true, questions: mixed };
+  const fresh = list => shuffle_(list.filter(q => !have.has(norm(q.q))));
+  const mcF = fresh(mc), shF = fresh(sh), mixed = [];
+  while ((mcF.length || shF.length) && mixed.length < count) { if (mcF.length) mixed.push(mcF.shift()); if (shF.length && mixed.length < count) mixed.push(shF.shift()); }
+  if (!mixed.length) return fail_('empty', (mc.length + sh.length) ? '이 성취기준에서 만들 수 있는 문항은 이미 다 목록에 있어요. 문항을 직접 고치거나 붙여넣기로 추가해 보세요' : '이 성취기준에는 자동 생성에 쓸 핵심 개념·본문이 부족해요');
+  return { ok: true, questions: mixed, left: mcF.length + shF.length };
 }
 
 /* ======================= 코인 일괄 지급 (교사) ======================= */
@@ -344,7 +347,7 @@ function saveSettings_(acc, body) {
   }
   return getSettings_(acc);
 }
-const FOLDERS = { data: '학생데이터', photos: '승인대기사진' };
+const FOLDERS = { data: '학생데이터', photos: '승인대기사진', qimg: '문항그림' };
 const ACC_HEADER = ['학번', '이름', '비밀번호해시', '솔트', '파일ID', '가입일', '최근접속', '공개설정', '초기화'];
 const ACC = { id: 0, name: 1, hash: 2, salt: 3, fileId: 4, created: 5, last: 6, privacy: 7, reset: 8 };
 const UNIT_HEADER = ['단원ID', '과목', '단원명', '성취기준', '교과서 발췌(복사 차단용)', '핵심 개념 (한 줄에 하나: 용어 | 별칭1, 별칭2 | 발판 힌트)', '오개념 (한 줄에 하나: 정규식 => 힌트)', '문항 (한 줄에 하나: 객관식 | 질문 | 보기1;보기2;보기3;보기4 | 정답번호(1부터) | 힌트  또는  단답형 | 질문 | 정답1;정답2 | 힌트)', '사용'];
@@ -650,9 +653,10 @@ function loadUnits_() {
   cache_().put('units', JSON.stringify(units), 300);
   return units.map(reviveUnit_);
 }
+function qsheet_() { const sh = sheet_(SHEETS.questions, QUESTION_HEADER); if (sh.getLastColumn() < QUESTION_HEADER.length) sh.getRange(1, 11).setValue(QUESTION_HEADER[10]); return sh; }
 /** 문항 시트 → { 성취기준ID: [question...] } ('사용' 꺼진 행 제외) */
 function questionMap_() {
-  const sh = sheet_(SHEETS.questions, QUESTION_HEADER); const n = sh.getLastRow();
+  const sh = qsheet_(); const n = sh.getLastRow();
   const rows = n > 1 ? sh.getRange(2, 1, n - 1, QUESTION_HEADER.length).getValues() : [];
   const map = {};
   rows.forEach(r => {
@@ -678,7 +682,7 @@ function parseQuestionRow_(r) {
     const choices = [r[3], r[4], r[5], r[6]].map(cellStr_).filter(Boolean);
     const ans = Number(r[7]) - 1;
     if (choices.length < 2 || !(ans >= 0 && ans < choices.length)) return null;
-    return { type: 'mc', q: text, choices, answer: ans, hint: cellStr_(r[8]) };
+    return { type: 'mc', q: text, choices, answer: ans, hint: cellStr_(r[8]), img: cellStr_(r[10]) };
   }
   if (/^단답형/.test(type)) {
     const answers = cellStr_(r[7]).split(';').map(x => x.trim()).filter(Boolean);
@@ -691,15 +695,16 @@ function parseQuestionRow_(r) {
 function textFormatQuestionRange_(sh, startRow, count) {
   sh.getRange(startRow, 1, count, 7).setNumberFormat('@');   // ID·유형·질문·보기1~4
   sh.getRange(startRow, 9, count, 1).setNumberFormat('@');   // 힌트
+  sh.getRange(startRow, 11, count, 1).setNumberFormat('@');  // 그림파일ID
 }
 function questionToRow_(id, q) {
   return q.type === 'mc'
-    ? [id, '객관식', q.q, q.choices[0] || '', q.choices[1] || '', q.choices[2] || '', q.choices[3] || '', q.answer + 1, q.hint || '', true]
-    : [id, '단답형', q.q, '', '', '', '', (q.answers || []).join(';'), q.hint || '', true];
+    ? [id, '객관식', q.q, q.choices[0] || '', q.choices[1] || '', q.choices[2] || '', q.choices[3] || '', q.answer + 1, q.hint || '', true, q.img || '']
+    : [id, '단답형', q.q, '', '', '', '', (q.answers || []).join(';'), q.hint || '', true, q.img || ''];
 }
 /** 특정 성취기준의 문항 행을 모두 교체 (교사 편집기 저장 / 예시 채우기) — 호출자가 잠금을 잡고 있어야 함 */
 function replaceQuestionRows_(id, questions) {
-  const sh = sheet_(SHEETS.questions, QUESTION_HEADER); const n = sh.getLastRow();
+  const sh = qsheet_(); const n = sh.getLastRow();
   for (let r = n; r >= 2; r--) if (String(sh.getRange(r, 1).getValue()).trim() === id) sh.deleteRow(r);
   if (questions.length) {
     const start = sh.getLastRow() + 1;
@@ -728,18 +733,40 @@ function saveQuestions_(acc, body) {
       const choices = (q.choices || []).map(x => String(x || '').trim()).filter(Boolean).slice(0, 4);
       const ans = Number(q.answer);
       if (choices.length < 2 || !(ans >= 0 && ans < choices.length)) return fail_('bad_q', '객관식은 보기 2개 이상과 정답 번호가 필요해요: ' + text.slice(0, 20));
-      clean.push({ type: 'mc', q: text, choices, answer: ans, hint: String(q.hint || '').trim() });
+      clean.push({ type: 'mc', q: text, choices, answer: ans, hint: String(q.hint || '').trim(), img: questionImage_(id, q) });
     } else {
       const answers = (q.answers || []).map(x => String(x || '').trim()).filter(Boolean);
       if (!answers.length) return fail_('bad_q', '단답형은 정답이 1개 이상 필요해요: ' + text.slice(0, 20));
-      clean.push({ type: 'short', q: text, answers, hint: String(q.hint || '').trim() });
+      clean.push({ type: 'short', q: text, answers, hint: String(q.hint || '').trim(), img: questionImage_(id, q) });
     }
   }
   if (clean.length > 10) return fail_('too_many', '문항은 성취기준당 10개까지예요');
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return fail_('busy', '지금 접속이 많아요. 잠시 후 다시 시도해 주세요');
   try { replaceQuestionRows_(id, clean); } finally { lock.releaseLock(); }
-  return { ok: true, count: clean.length };
+  return { ok: true, count: clean.length, questions: clean };
+}
+/** 문항 그림: imgData(새 JPEG data URL)가 오면 Drive '문항그림' 폴더에 저장하고 파일ID 반환, 아니면 기존 img(파일ID) 유지 */
+function questionImage_(topicId, q) {
+  const data = typeof q.imgData === 'string' ? q.imgData : '';
+  if (data) {
+    if (!data.startsWith('data:image/jpeg;base64,') || data.length > 400000) throw new Error('문항 그림은 JPEG 300KB 이하여야 해요');
+    const f = subfolder_(FOLDERS.qimg).createFile(Utilities.newBlob(Utilities.base64Decode(data.split(',')[1]), 'image/jpeg', topicId + '_' + Date.now() + '.jpg'));
+    return f.getId();
+  }
+  const id = String(q.img || '').trim();
+  return /^[\w-]{10,}$/.test(id) ? id : '';
+}
+/** 문항 그림 보기 (로그인한 누구나; 문항 시트에 등록된 파일만) */
+function questionImageData_(body) {
+  const fid = String(body.fileId || '').trim(); if (!/^[\w-]{10,}$/.test(fid)) return fail_('bad', '그림을 찾을 수 없어요');
+  const c = cache_().get('qimg_' + fid); if (c) return { ok: true, data: c };
+  const used = Object.values(questionMap_()).some(list => list.some(q => q.img === fid));
+  if (!used) return fail_('bad', '문항에 쓰이지 않는 그림이에요');
+  let data;
+  try { const b = DriveApp.getFileById(fid).getBlob(); data = 'data:' + (b.getContentType() || 'image/jpeg') + ';base64,' + Utilities.base64Encode(b.getBytes()); } catch (e) { return fail_('no_file', '그림 파일을 찾을 수 없어요'); }
+  if (data.length < 95000) cache_().put('qimg_' + fid, data, 3600);
+  return { ok: true, data };
 }
 function reviveUnit_(u) { u.misconceptions = (u.misconceptions || []).map(m => ({ pattern: m.pattern, hint: m.hint })); return u; }
 function lines_(s) { return String(s || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean); }
@@ -766,7 +793,7 @@ function parseUnit_(r) {
 }
 function publicUnits_(units) {
   return units.map(u => ({ id: u.id, unitId: u.unitId, code: u.code, subject: u.subject, title: u.title, standard: u.standard, conceptCount: u.keyConcepts.length,
-    questions: u.questions.map(q => ({ type: q.type, q: q.q, choices: q.choices })) }));
+    questions: u.questions.map(q => ({ type: q.type, q: q.q, choices: q.choices, img: q.img || '' })) }));
 }
 
 /* ======================= 승인 (사진/쿠폰) ======================= */
@@ -994,6 +1021,7 @@ function doPost(e) {
       case 'sticker': return json_(sticker_(acc, body, today));
       case 'inbox': return json_({ ok: true, inbox: inbox_(acc), settings: publicSettings_() });   // 1분 폴링으로 잠금 설정도 갱신
       case 'questions': return json_(questionsFor_(acc, body));          // 교사 전용
+      case 'qimg': return json_(questionImageData_(body));              // 문항 그림
       case 'saveQuestions': return json_(saveQuestions_(acc, body));     // 교사 전용
       case 'coupons': return json_({ ok: true, coupons: loadCoupons_() });
       case 'items': return json_({ ok: true, items: loadItems_() });
