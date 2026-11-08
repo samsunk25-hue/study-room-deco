@@ -996,6 +996,7 @@ function doPost(e) {
     if (!acc.teacher) touchOnline_(acc, body.where);
     switch (a) {
       case 'online': return json_(online_(acc));                         // 교사 전용
+      case 'feed': return json_(feed_(acc, body));                        // 교사 전용 (실시간 제출 현황)
       case 'unitStats': return json_(unitStats_(acc));                   // 교사 전용
       case 'seedTest': return json_(seedTest_(acc, body, today));          // 교사 전용 (테스트 자료)
       case 'grantCoins': return json_(grantCoins_(acc, body));           // 교사 전용 (코인 일괄 지급)
@@ -1006,7 +1007,9 @@ function doPost(e) {
       case 'cmd': return json_(command_(acc, body.cmd, today));
       case 'grade': {
         const u = loadUnits_().find(x => x.id === (body.topicId || body.unitId)); if (!u) return json_(fail_('no_unit', '성취기준을 찾을 수 없어요'));
-        return json_({ ok: true, result: Engine.grade(u, body.answers || {}) });
+        const g = Engine.grade(u, body.answers || {});
+        if (!acc.teacher) { try { feedPush_({ t: Date.now(), kind: 'quiz', id: acc.id, name: acc.name, topicId: u.id, unitId: u.unitId || '', code: u.code || '', quiz: { correct: g.filter(x => x.ok).length, total: g.length } }); } catch (e) { /* 무시 */ } }
+        return json_({ ok: true, result: g });
       }
       case 'changePassword': return json_(changePassword_(acc, body));
       case 'teacherSetPassword': return json_(teacherSetPassword_(acc, body));   // 교사: 이메일 로그인용 비밀번호
@@ -1042,6 +1045,23 @@ function doPost(e) {
   }
 }
 /** 게임 명령: 서버의 Engine 이 코인·보상·판정을 결정 */
+/* ======================= 실시간 제출 피드 (교사용 · 당일 · 캐시) ======================= */
+function feedKey_() { return 'feed_' + todayKey_(); }
+function feedPush_(entry) {
+  const lock = LockService.getScriptLock(); if (!lock.tryLock(3000)) return;   // 못 잡으면 이번 항목은 건너뜀 (평가기록부에는 남음)
+  try {
+    const c = cache_(); let list = []; try { list = JSON.parse(c.get(feedKey_()) || '[]'); } catch (e) { list = []; }
+    list.push(entry); if (list.length > 150) list = list.slice(-150);
+    let s = JSON.stringify(list); while (s.length > 95000 && list.length > 20) { list = list.slice(10); s = JSON.stringify(list); }
+    c.put(feedKey_(), s, 21600);
+  } finally { lock.releaseLock(); }
+}
+function feed_(acc, body) {
+  if (!acc.teacher) return fail_('forbidden', '교사만 볼 수 있어요');
+  let list = []; try { list = JSON.parse(cache_().get(feedKey_()) || '[]'); } catch (e) { list = []; }
+  const since = Number(body.since) || 0;
+  return { ok: true, now: Date.now(), feed: list.filter(e => e.t > since) };
+}
 function command_(acc, cmd, today) {
   if (!cmd || typeof cmd !== 'object') return fail_('bad_cmd');
   const units = loadUnits_();
@@ -1052,6 +1072,11 @@ function command_(acc, cmd, today) {
   flushPendingApprovals_(acc, state);
   if (acc.teacher) state.coins = 999999;   // 교사는 코인 무제한
   saveState_(acc, state);
+  if (cmd.type === 'submit' && !acc.teacher && r.result) {   // 교사 실시간 현황용
+    const res = r.result.res || {}, oc = r.result.outcome || {}, rec = r.result.record || {}, topic = units.find(t => t.id === (cmd.topicId || cmd.unitId)) || {};
+    try { feedPush_({ t: Date.now(), kind: 'submit', id: acc.id, name: acc.name, topicId: topic.id || '', unitId: topic.unitId || '', code: topic.code || '', pass: !!res.pass, score: res.score || 0, attempts: rec.attempts || 1,
+      quiz: (oc && r.result.quiz) ? { correct: r.result.quiz.filter(x => x.ok).length, total: r.result.quiz.length } : null, opened: oc.opened || 0, total: oc.total || 0, coins: oc.coins || 0, summary: String(cmd.text || '').slice(0, 220) }); } catch (e) { /* 피드 실패는 무시 */ }
+  }
   return { ok: true, result: r.result || null, state };
 }
 

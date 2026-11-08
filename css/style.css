@@ -255,6 +255,8 @@ table.sheet th { background: #f6f3ee; }
 #visit-canvas { width: 100%; height: auto; display: block; background: linear-gradient(180deg, #fff7e6, #fbf0dc); border-radius: var(--radius); box-shadow: var(--shadow); }
 .consent label { display: flex; gap: 8px; align-items: flex-start; font-weight: 500; font-size: 0.92rem; margin: 8px 0; }
 .consent input { margin-top: 4px; accent-color: var(--primary); }
+.feed-row.fresh { border-left: 4px solid #f59e0b; padding-left: 8px; }
+.feed-row .text { margin-top: 4px; color: var(--ink); }
 .notice { background: #fff8e6; border: 1.5px solid #fcd38a; border-radius: 12px; padding: 10px 12px; font-size: 0.88rem; margin: 8px 0; }
 .summary-card { border: 1.5px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 8px 0; }
 .summary-card .meta { font-size: 0.8rem; color: var(--muted); display: flex; gap: 8px; justify-content: space-between; align-items: center; }

@@ -298,6 +298,7 @@ function renderRoomPanel() {
     renderRoomHint();
     pollUnitStats(false);
     renderOnlineCard();
+    renderFeedCard();
     return;
   }
   const room = currentRoom();
@@ -1210,6 +1211,46 @@ function renderOnlineCard() {
     `<p class="muted small" style="margin-top:8px">전체 접속 ${onlineList.length}명 · 1분마다 새로 확인해요. 이름을 누르면 그 학생 방에 들어가요.</p>`;
   $$('#online-card .online-chip').forEach(el => el.onclick = () => { showScreen('friends'); visitFriend(el.dataset.id); });
 }
+/* ---------------- 교사: 실시간 제출 현황 (오늘) ---------------- */
+let feedState = { items: [], since: 0, timer: null, showAll: false, lastSeen: 0 };
+async function pollFeed() {
+  if (!isTeacher() || MODE !== 'server') return;
+  try {
+    const r = await API.call({ action: 'feed', since: feedState.since });
+    if (!r.ok) return;
+    const key = e => e.t + '|' + e.id + '|' + e.kind;
+    const have = new Set(feedState.items.map(key));
+    (r.feed || []).forEach(e => { if (!have.has(key(e))) feedState.items.push(e); });
+    feedState.items.sort((a, b) => b.t - a.t); if (feedState.items.length > 300) feedState.items.length = 300;
+    feedState.since = Math.max(feedState.since, ...(r.feed || []).map(e => e.t), 0);
+    if ($('#screen-room').classList.contains('active')) renderFeedCard();
+  } catch (e) { /* ignore */ }
+}
+function startFeed() { clearInterval(feedState.timer); feedState = { items: [], since: 0, timer: setInterval(pollFeed, 15000), showAll: false, lastSeen: 0 }; pollFeed(); }
+function fmtClock(t) { const d = new Date(t); return (d.getHours() < 10 ? '0' : '') + d.getHours() + ':' + (d.getMinutes() < 10 ? '0' : '') + d.getMinutes(); }
+function renderFeedCard() {
+  if (!isTeacher()) return;
+  let card = $('#feed-card');
+  if (!card) { card = document.createElement('div'); card.id = 'feed-card'; card.className = 'card'; card.style.background = '#fffbeb'; const oc = $('#online-card'); if (oc && oc.nextSibling) $('#room-panel').insertBefore(card, oc.nextSibling); else $('#room-panel').appendChild(card); }
+  const all = feedState.items; const unitItems = tUnit ? all.filter(e => e.unitId === tUnit) : all;
+  const items = feedState.showAll ? all : unitItems;
+  const subs = all.filter(e => e.kind === 'submit'); const passed = subs.filter(e => e.pass); const students = new Set(all.map(e => e.id));
+  const fresh = Date.now() - 60000;
+  const row = e => `<div class="rec feed-row ${e.t > fresh ? 'fresh' : ''}" style="margin:6px 0">
+      <div class="meta"><b>${fmtClock(e.t)}</b> <span class="feed-name" data-id="${esc(e.id)}" style="cursor:pointer">${emojiFor(e.id)} ${esc(e.name)} <small class="muted">${esc(e.id)}</small></span>
+        <span class="muted">${esc(e.code || unitTitle(e.unitId))}</span>
+        ${e.kind === 'quiz' ? `<span class="tag">📝 퀴즈 ${e.quiz ? e.quiz.correct + '/' + e.quiz.total : ''}</span>` : `<span class="tag ${e.pass ? 'pass' : 'fail'}">${e.pass ? '✅ 요약 통과' : '🔁 재도전 ' + e.attempts + '회'}</span><span>${e.score}점</span><span>개념 ${e.opened}/${e.total}</span>${e.quiz ? `<span>퀴즈 ${e.quiz.correct}/${e.quiz.total}</span>` : ''}${e.coins ? `<span>🪙 +${e.coins}</span>` : ''}`}</div>
+      ${e.kind === 'submit' ? `<div class="text small">${esc(e.summary || '')}</div>` : ''}</div>`;
+  card.innerHTML = `<h3>📡 실시간 제출 현황 <small class="muted">— 오늘 · 15초마다 갱신</small></h3>
+    <div class="chips" style="margin:6px 0"><span class="chip">요약 제출 ${subs.length}</span><span class="chip">통과 ${passed.length}</span><span class="chip">참여 학생 ${students.size}명</span>
+      <button class="chip ${feedState.showAll ? '' : 'on'}" id="feed-unit">${tUnit ? esc(unitTitle(tUnit)) : '선택 단원'}만 (${unitItems.length})</button><button class="chip ${feedState.showAll ? 'on' : ''}" id="feed-all">전체 (${all.length})</button><button class="chip" id="feed-refresh">🔄 지금 새로고침</button></div>
+    ${items.length ? items.slice(0, 60).map(row).join('') : '<p class="muted small">아직 오늘 제출이 없어요. 학생이 퀴즈를 채점하거나 요약을 제출하면 여기에 바로 나타나요.</p>'}
+    ${items.length > 60 ? '<p class="muted small">최근 60건만 보여요. 전체 기록은 서재(교사)와 평가기록부 시트에 있어요.</p>' : ''}`;
+  $('#feed-unit').onclick = () => { feedState.showAll = false; renderFeedCard(); };
+  $('#feed-all').onclick = () => { feedState.showAll = true; renderFeedCard(); };
+  $('#feed-refresh').onclick = () => pollFeed();
+  $$('#feed-card .feed-name').forEach(el => el.onclick = () => { showScreen('friends'); visitFriend(el.dataset.id); });
+}
 async function pollOnline() {
   try { const r = await API.call({ action: 'online' }); if (r.ok) { onlineList = r.students || []; if ($('#screen-room').classList.contains('active')) renderRoom(); }
     pollUnitStats(false); } catch (e) { /* ignore */ }
@@ -1337,7 +1378,7 @@ function renderRoomHint() {
     $('#btn-other-wall').onclick = () => { myRoom.toggleWall(); renderRoomHint(); };
     $('#btn-iso').onclick = () => { myRoom.setView('iso'); renderRoomHint(); };
   } else if (isTeacher()) {
-    el.textContent = '위 단원 칩의 👥는 지금 그 단원을 학습 중인 학생 수, 시작 n명은 한 번이라도 학습한 학생 수예요. 칩을 누르면 아래에 이름이 보이고, 이름을 누르면 학생 방으로 들어가요.';
+    el.textContent = '위 단원 칩의 👥는 지금 그 단원을 학습 중인 학생 수, 시작 n명은 한 번이라도 학습한 학생 수예요. 칩을 누르면 아래에 접속 학생과 그 단원의 실시간 제출이 보이고, 이름을 누르면 학생 방으로 들어가요.';
   } else {
     el.innerHTML = '가구를 끌어서 옮기고, 선택한 뒤 <b>R</b> 키로 회전할 수 있어요. <b>벽을 클릭</b>하면 그 벽을 크게 볼 수 있어요.';
   }
@@ -1349,7 +1390,7 @@ function start() {
   updateHeader(); checkLocks();
   $('#logout-btn').classList.toggle('hidden', MODE !== 'server');
   $('#tab-friends').classList.toggle('hidden', MODE !== 'server');
-  if (MODE === 'server') { API.flush(); pollInbox(); clearInterval(pollTimer); pollTimer = setInterval(pollInbox, 60000); }
+  if (MODE === 'server') { API.flush(); pollInbox(); clearInterval(pollTimer); pollTimer = setInterval(pollInbox, 60000); if (isTeacher()) startFeed(); }
   showScreen(state.records.length ? 'room' : 'study');
 }
 async function init() {
