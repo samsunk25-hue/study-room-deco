@@ -11,7 +11,7 @@ const Engine = (() => {
   const VERSION = 3;
   const HOME = 'home';         // 방은 하나 (단원별 흔적은 개념도 액자·단원 트로피로 남음)
   const DEFAULT_ROOM = () => ({ wall: '#f6ecdc', floor: '#d8b07c', inventory: [], monster: null });
-  const R = () => Object.assign({ conceptCoin: 10, quizCoin: 10, passCoin: 30, firstTryBonus: 20, monsterBonus: 15 }, CONFIG.rewards || {});
+  const R = () => Object.assign({ conceptCoin: 10, quizCoin: 10, passCoin: 30, firstTryBonus: 20, monsterBonus: 15, advCoin: 15, advBonus: 20 }, CONFIG.rewards || {});
 
   /* ---------- 단원 묶기 ---------- */
   function unitIdOf(t) { return t.unitId || String(t.id).replace(/_\d\d$/, ''); }
@@ -148,6 +148,21 @@ const Engine = (() => {
   function normAns(s) { return String(s === undefined || s === null ? '' : s).replace(/\s/g, '').toLowerCase(); }
 
   /* ---------- 형성평가 채점 ---------- */
+  function gradeList(list, answers) {
+    return (list || []).map((q, i) => {
+      const a = answers ? answers[i] : null;
+      const ok = q.type === 'mc' ? Number(a) === q.answer : (q.answers || []).some(x => normAns(x) === normAns(a));
+      return { ok, hint: ok ? '' : q.hint };
+    });
+  }
+  /** 발전 문제 자격: 요약 통과 + 그때 형성평가 전부 정답. 가장 최근 통과 기록을 돌려줌 */
+  function advEligible(state, topicId) {
+    const recs = state.records.filter(r => r.topicId === topicId && r.pass).sort((a, b) => b.date.localeCompare(a.date));
+    const rec = recs[0]; if (!rec) return { ok: false, reason: 'not_passed', rec: null };
+    const q = rec.quiz || { correct: 0, total: 0 };
+    if (q.total > 0 && q.correct < q.total) return { ok: false, reason: 'quiz', rec };
+    return { ok: true, rec };
+  }
   function grade(topic, answers) {
     return topic.questions.map((q, i) => {
       const a = answers ? answers[i] : null;
@@ -297,6 +312,20 @@ const Engine = (() => {
         state.conceptMaps[cmd.unitId] = true;
         return { ok: true, result: { uid: it.uid, trophyUid: tr ? tr.uid : null } };
       }
+      case 'advQuiz': {   // 발전 문제: 오류 없이 통과한 성취기준에서만, 보상은 1회
+        const topic = topicsOf(ctx).find(t => t.id === cmd.topicId); if (!topic) return fail('성취기준을 찾을 수 없어요');
+        const list = topic.advQuestions || [];
+        if (!list.length || list[0].answer === undefined && !list[0].answers) return fail('이 성취기준의 발전 문제는 서버에서만 풀 수 있어요');
+        const el = advEligible(state, topic.id);
+        if (!el.ok) return fail(el.reason === 'quiz' ? '형성평가를 모두 맞히고 요약을 통과해야 발전 문제를 풀 수 있어요' : '먼저 요약을 통과해야 발전 문제를 풀 수 있어요');
+        const g = gradeList(list, cmd.answers || {});
+        const correct = g.filter(x => x.ok).length, total = g.length, rw = R();
+        const rec = el.rec; const practice = !!(rec.adv && rec.adv.rewarded);
+        let coins = 0;
+        if (!practice) { coins = correct * rw.advCoin + (correct === total ? rw.advBonus : 0); state.coins += coins; }
+        rec.adv = { correct: Math.max(correct, rec.adv ? rec.adv.correct : 0), total, rewarded: true, coins: (rec.adv ? rec.adv.coins || 0 : 0) + coins, date: ctx.today };
+        return { ok: true, result: { quiz: g, correct, total, coins, practice, allCorrect: correct === total } };
+      }
       case 'settings': {
         if (!['open', 'knock', 'private'].includes(cmd.privacy)) return fail('잘못된 공개 설정이에요');
         state.settings.privacy = cmd.privacy;
@@ -328,5 +357,5 @@ const Engine = (() => {
     return { name: state.student ? state.student.name : '', rooms, summaries };
   }
 
-  return { VERSION, N, HOME, newState, migrate, room, footprint, randomFreeTile, addItem, eventActive, activeEvents, defaultEvents, rollItem, monthStats, unitProgress, grade, submit, apply, publicView, groupUnits, unitIdOf };
+  return { VERSION, N, HOME, advEligible, gradeList, newState, migrate, room, footprint, randomFreeTile, addItem, eventActive, activeEvents, defaultEvents, rollItem, monthStats, unitProgress, grade, submit, apply, publicView, groupUnits, unitIdOf };
 })();

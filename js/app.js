@@ -22,7 +22,7 @@ function applyPricing(p) {   // 서버에서 받은 가격·보상을 CONFIG 에
   if (!p) return;
   CONFIG.shopPrice = { common: p.common, rare: p.rare, epic: p.epic };
   CONFIG.recolorCost = p.recolor; CONFIG.restyleCost = p.restyle; CONFIG.wallpaperCost = p.wallpaper; ITEMS.photo_frame.cost = p.photoFrame;
-  CONFIG.rewards = Object.assign({}, CONFIG.rewards, { conceptCoin: p.conceptCoin, quizCoin: p.quizCoin, passCoin: p.passCoin, firstTryBonus: p.firstTryBonus, monsterBonus: p.monsterBonus });
+  CONFIG.rewards = Object.assign({}, CONFIG.rewards, { conceptCoin: p.conceptCoin, quizCoin: p.quizCoin, passCoin: p.passCoin, firstTryBonus: p.firstTryBonus, monsterBonus: p.monsterBonus, advCoin: p.advCoin, advBonus: p.advBonus });
   CONFIG.sticker = Object.assign({}, CONFIG.sticker, { coin: p.stickerCoin });
 }
 let myRoom = null, visitRoom = null;
@@ -39,6 +39,21 @@ function shortDate(key) { return key.slice(5).replace('-', '/'); }
 function ctx() { return { topics, units, coupons, events, today: todayKey(), rng: Math.random }; }
 function unitOf(id) { return units.find(u => u.id === id); }
 /** 서버에 보내는 현재 위치: 학습 중이면 그 단원, 아니면 보고 있는 방 */
+/* 교사 실시간 확인용 현재 상태: 어느 화면·단계인지, 화면을 벗어났는지 */
+const presence = { away: false, since: 0 };
+function presenceNow() {
+  if (!state || isTeacher()) return null;
+  const scr = ($$('.screen').find(s => s.classList.contains('active')) || {}).id || ''; const name = scr.replace('screen-', '');
+  const st = name === 'study' ? 'study:' + (study.step || 'units') : name;
+  const ta = name === 'study' && study.step === 'summary' ? $('#summary-text') : null;
+  return { step: st, topic: study.topic && name === 'study' ? (study.topic.code || study.topic.id) : '', len: ta ? ta.value.length : 0, away: presence.away };
+}
+let pingTimer = null;
+function sendPing() { if (MODE !== 'server' || !state || isTeacher()) return; API.call({ action: 'ping' }).catch(() => {}); }
+function setAway(v) { if (presence.away === v) return; presence.away = v; presence.since = v ? Date.now() : 0; sendPing(); }
+document.addEventListener('visibilitychange', () => setAway(document.hidden));
+window.addEventListener('blur', () => setAway(true));
+window.addEventListener('focus', () => setAway(false));
 function whereNow() { if (!state) return ''; const st = $('#screen-study'); if (st && st.classList.contains('active') && study.unit) return study.unit.id; return currentRoomId || ''; }
 function topicOf(id) { return topics.find(t => t.id === id); }
 function topicCode(id) { const t = topicOf(id); return t && t.code ? t.code : ''; }
@@ -458,12 +473,14 @@ function renderStudy() {
     body.innerHTML = `<div class="card"><div class="subject muted small">${esc(u.subject)}</div><h2>${esc(u.title)}</h2><p class="muted small">성취기준을 하나 골라요. 형성평가와 요약은 그 성취기준의 내용만 다뤄요.</p>
       ${u.topics.map(t => {
         const r = recOf(t.id); const total = t.conceptCount || (t.keyConcepts ? t.keyConcepts.length : 0);
-        const st = !r ? '<span class="state muted">아직 안 했어요</span>' : r.pass ? `<span class="state pass">✅ 통과 · 개념 ${r.opened.length}/${total} 열림 · 🪙 ${r.reward ? r.reward.coins : 0}</span>` : `<span class="state retry">🔓 개념 ${r.opened.length}/${total} 열림 · 🪙 ${r.reward ? r.reward.coins : 0} · 재도전 가능</span>`;
+        const el = Engine.advEligible(state, t.id); const advN = (t.advQuestions || []).length;
+        const adv = !advN ? '' : (el.ok && el.rec.adv ? ` <span class="state pass">🚀 발전 ${el.rec.adv.correct}/${el.rec.adv.total}</span>` : (el.ok ? ' <span class="state pass" style="background:#fef3c7;color:#92400e">🚀 발전 문제 도전 가능</span>' : ''));
+        const st = (!r ? '<span class="state muted">아직 안 했어요</span>' : r.pass ? `<span class="state pass">✅ 통과 · 개념 ${r.opened.length}/${total} 열림 · 🪙 ${r.reward ? r.reward.coins : 0}</span>` : `<span class="state retry">🔓 개념 ${r.opened.length}/${total} 열림 · 🪙 ${r.reward ? r.reward.coins : 0} · 재도전 가능</span>`) + adv;
         return `<div class="card unit-card topic-card" data-topic="${esc(t.id)}"><div class="subject">${esc(t.code || '')}</div><div class="small" style="margin:4px 0 6px">${esc(t.standard.split('\n')[0].replace(/^\[[^\]]+\]\s*/, ''))}</div>${st}</div>`;
       }).join('')}
       <div class="btn-row"><button class="btn ghost" id="btn-back">← 단원 선택</button></div></div>`;
     $('#btn-back').onclick = () => { study = { step: 'units' }; renderStudy(); };
-    $$('.topic-card').forEach(el => el.onclick = () => { study = { step: 'quiz', unit: u, topic: topicOf(el.dataset.topic), answers: {}, graded: false }; renderStudy(); });
+    $$('.topic-card').forEach(el => el.onclick = () => { const t = topicOf(el.dataset.topic); const ok = Engine.advEligible(state, t.id); if ((t.advQuestions || []).length && ok.ok && !(ok.rec.adv && ok.rec.adv.rewarded)) { study = { step: 'adv', unit: u, topic: t, answers: {}, graded: false }; renderStudy(); return; } study = { step: 'quiz', unit: u, topic: t, answers: {}, graded: false }; renderStudy(); });
     return;
   }
   const t = study.topic;
@@ -513,6 +530,7 @@ function renderStudy() {
     return;
   }
   if (study.step === 'result') renderResult();
+  if (study.step === 'adv') renderAdv();
 }
 function showQuizFeedback() {
   study.topic.questions.forEach((q, i) => {
@@ -559,12 +577,43 @@ function renderResult() {
     ${!res.pass ? `<p class="muted">정답은 알려주지 않아요. 힌트를 보고 요약을 고쳐 다시 제출하면 <b>새로 열리는 개념마다 코인</b>을 더 받고, 통과하면 가구 상자를 받아요.${o.monster ? ' 이 단원 방에 오개념 먼지 괴물이 나타났어요 — 통과하면 정화 보너스!' : ''}</p>` : ''}
     <div class="btn-row">
       ${res.pass && o.itemId ? '<button class="btn primary big" id="btn-open-box">📦 가구 상자 열기</button>' : ''}
+      ${res.pass && (t.advQuestions || []).length && Engine.advEligible(state, t.id).ok && !(rec && rec.adv && rec.adv.rewarded) ? `<button class="btn accent big" id="btn-adv">🚀 발전 문제 도전 (+🪙 최대 ${(t.advQuestions.length * (CONFIG.rewards.advCoin || 15)) + (CONFIG.rewards.advBonus || 20)})</button>` : ''}
       ${!res.pass ? '<button class="btn primary big" id="btn-retry">✏️ 요약 고쳐서 재도전</button>' : ''}
       <button class="btn" id="btn-topics">다른 성취기준 하기</button><button class="btn ghost" id="btn-room">🛋️ 내 방으로</button></div></div>`;
   const ob = $('#btn-open-box'); if (ob) ob.onclick = () => openBox(o);
+  const ab = $('#btn-adv'); if (ab) ab.onclick = () => { study.step = 'adv'; study.answers = {}; study.graded = false; renderStudy(); };
   const rt = $('#btn-retry'); if (rt) rt.onclick = () => { study.step = 'summary'; renderStudy(); };
   $('#btn-topics').onclick = () => { study = { step: 'topics', unit: u }; renderStudy(); };
   $('#btn-room').onclick = () => showScreen('room');
+}
+/* ---------------- 발전 문제 (오류 없이 통과한 학생) ---------------- */
+function renderAdv() {
+  const u = study.unit, t = study.topic, list = t.advQuestions || [];
+  const el = Engine.advEligible(state, t.id); const done = el.ok && el.rec.adv;
+  const body = $('#study-body');
+  if (!list.length || !el.ok) { body.innerHTML = '<div class="card"><p class="muted">발전 문제가 없거나 아직 도전할 수 없어요.</p><div class="btn-row"><button class="btn" id="btn-topics">← 성취기준 선택</button></div></div>'; $('#btn-topics').onclick = () => { study = { step: 'topics', unit: u }; renderStudy(); }; return; }
+  const g = study.advGrade;
+  body.innerHTML = `<div class="card"><div class="subject muted small">${esc(u.subject)} · ${esc(u.title)}</div><h2>🚀 ${esc(t.code || '')} 발전 문제</h2>
+    <div class="notice">형성평가를 모두 맞히고 요약을 통과한 친구만 푸는 문제예요. ${done ? `이미 ${done.correct}/${done.total} 맞혀 🪙 ${done.coins || 0}을 받았어요. 다시 풀어도 코인은 더 받지 않아요.` : `정답 1개마다 🪙 ${CONFIG.rewards.advCoin || 15}, 전부 맞히면 🪙 ${CONFIG.rewards.advBonus || 20} 보너스!`}</div>
+    ${list.map((q, i) => `<div class="q" data-i="${i}" style="margin-top:12px"><div class="qt">A${i + 1}. ${esc(q.q)}</div>${q.img ? `<div class="qimg" data-fid="${esc(q.img)}"><img alt="문제 그림" style="max-width:100%;max-height:360px;border-radius:10px;margin:6px 0;display:none"><span class="muted small">그림 불러오는 중...</span></div>` : ''}
+      ${q.type === 'mc' ? `<div class="choices">${q.choices.map((c, j) => `<label class="choice ${g && g[i] ? (j == study.answers[i] ? (g[i].ok ? 'correct' : 'wrong') : '') : ''}"><input type="radio" name="a${i}" value="${j}" ${g ? 'disabled' : ''} ${study.answers[i] == j ? 'checked' : ''}><span>${esc(c)}</span></label>`).join('')}</div>`
+        : `<input type="text" class="short adv-short" data-i="${i}" placeholder="답을 입력하세요" value="${esc(study.answers[i] || '')}" ${g ? 'disabled' : ''}>`}
+      ${g && g[i] ? `<div class="feedback ${g[i].ok ? 'ok' : 'bad'}">${g[i].ok ? '정답이에요! 🎉' : '아쉬워요. ' + (g[i].hint ? '💡 ' + esc(g[i].hint) : '')}</div>` : ''}</div>`).join('')}
+    ${study.advResult ? `<div class="hintbox" style="background:#ecfdf5;border-color:#16a34a">${study.advResult.correct}/${study.advResult.total} 정답${study.advResult.coins ? ` · 🪙 <b>+${study.advResult.coins}</b>` : (study.advResult.practice ? ' · 연습 (코인 없음)' : '')}${study.advResult.allCorrect ? ' · 완벽해요! 🏅' : ''}</div>` : ''}
+    <div class="btn-row">${g ? '' : '<button class="btn primary big" id="btn-adv-grade">채점하기</button>'}<button class="btn" id="btn-topics">다른 성취기준 하기</button><button class="btn ghost" id="btn-room">🛋️ 내 방으로</button></div></div>`;
+  loadQuestionImages(body);
+  $('#btn-topics').onclick = () => { study = { step: 'topics', unit: u }; renderStudy(); };
+  $('#btn-room').onclick = () => showScreen('room');
+  const bg = $('#btn-adv-grade'); if (bg) bg.onclick = async () => {
+    list.forEach((q, i) => { if (q.type === 'mc') { const c = document.querySelector(`input[name=a${i}]:checked`); study.answers[i] = c ? +c.value : null; } else { const inp = document.querySelector(`.adv-short[data-i="${i}"]`); study.answers[i] = inp ? inp.value.trim() : ''; } });
+    if (list.some((q, i) => study.answers[i] === null || study.answers[i] === undefined || study.answers[i] === '')) return toast('모든 문제에 답해 주세요', 'bad');
+    bg.disabled = true;
+    const r = await dispatch({ type: 'advQuiz', topicId: t.id, answers: study.answers }, true);
+    if (!r.ok) { bg.disabled = false; return; }
+    if (MODE === 'local') saveLocal();
+    study.advGrade = r.result.quiz; study.advResult = r.result; updateHeader(); renderStudy();
+    toast(r.result.coins ? `발전 문제 ${r.result.correct}/${r.result.total} 정답! 🪙 +${r.result.coins}` : `발전 문제 ${r.result.correct}/${r.result.total} 정답`, 'ok');
+  };
 }
 let streamTimer;
 function showLoading(on) {
@@ -914,7 +963,7 @@ function renderTSettings() {
     <div style="display:flex;gap:8px;align-items:center;margin:0 0 10px 26px" class="small">잠금 시간 <input type="number" id="ts-cstart" min="0" max="23" value="${s.classLock ? s.classLock.start : 9}" style="width:70px"> 시 ~ <input type="number" id="ts-cend" min="1" max="24" value="${s.classLock ? s.classLock.end : 16}" style="width:70px"> 시 <span class="muted">(예: 9 ~ 16)</span></div>
     <label>가입 코드 <input type="text" id="ts-join" value="${esc(s.joinCode)}" placeholder="비우면 누구나 가입할 수 있어요" maxlength="40"></label>
     <div class="row-label" style="margin-top:12px">🎁 보상 (코인) <small class="muted">— 가구·리폼 가격은 상점 탭에서 조절해요</small></div>
-    <div class="chips">${[['conceptCoin','개념 1개 열림'],['quizCoin','퀴즈 정답 1개'],['passCoin','요약 통과'],['firstTryBonus','첫 시도 통과'],['monsterBonus','괴물 정화'],['stickerCoin','영감 스티커']].map(([k, n]) => `<label class="small" style="display:flex;align-items:center;gap:4px;margin:0">${n} <input type="number" min="0" data-price="${k}" value="${(s.prices || {})[k] ?? ''}" style="width:76px;padding:6px 8px"></label>`).join('')}</div>
+    <div class="chips">${[['conceptCoin','개념 1개 열림'],['quizCoin','퀴즈 정답 1개'],['passCoin','요약 통과'],['firstTryBonus','첫 시도 통과'],['monsterBonus','괴물 정화'],['advCoin','발전 문제 정답 1개'],['advBonus','발전 문제 전부 정답'],['stickerCoin','영감 스티커']].map(([k, n]) => `<label class="small" style="display:flex;align-items:center;gap:4px;margin:0">${n} <input type="number" min="0" data-price="${k}" value="${(s.prices || {})[k] ?? ''}" style="width:76px;padding:6px 8px"></label>`).join('')}</div>
     <div class="btn-row"><button class="btn primary" id="ts-save">설정 저장</button></div>`;
   $('#ts-save').onclick = async () => {
     const prices = {}; $$('#t-settings input[data-price]').forEach(i => { if (i.value !== '') prices[i.dataset.price] = Number(i.value); });
@@ -1104,8 +1153,8 @@ function parseQuestionText(text) {
 }
 function renderTQList() {
   const list = tAdmin.questions;
-  $('#tq-list').innerHTML = `<p class="muted small">${tAdmin.source === 'sheet' ? '문항 시트에 저장된 문항이에요.' : '아직 문항 시트에 없어서 기본 문항을 보여 줘요. 저장하면 문항 시트에 들어가요.'} 저장 후 5분 안에 학생 화면에 반영돼요.</p>
-    ${list.map((q, i) => `<div class="summary-card"><div class="meta"><span><b>Q${i + 1}</b> <select data-i="${i}" data-k="type"><option value="mc" ${q.type === 'mc' ? 'selected' : ''}>객관식</option><option value="short" ${q.type === 'short' ? 'selected' : ''}>단답형</option></select></span><button class="btn tiny danger tq-del" data-i="${i}">삭제</button></div>
+  $('#tq-list').innerHTML = `<p class="muted small">${tAdmin.source === 'sheet' ? '문항 시트에 저장된 문항이에요.' : '아직 문항 시트에 없어서 기본 문항을 보여 줘요. 저장하면 문항 시트에 들어가요.'} 저장 후 5분 안에 학생 화면에 반영돼요. <b>🚀 발전</b>으로 표시한 문항은 형성평가를 모두 맞히고 요약을 통과한 학생에게 "발전 문제"로 따로 제공되고 정답마다 추가 코인을 줘요(기본·발전 각각 10개까지).</p>
+    ${list.map((q, i) => `<div class="summary-card"><div class="meta"><span><b>Q${i + 1}</b> <select data-i="${i}" data-k="type"><option value="mc" ${q.type === 'mc' ? 'selected' : ''}>객관식</option><option value="short" ${q.type === 'short' ? 'selected' : ''}>단답형</option></select> <select data-i="${i}" data-k="level" title="발전 문제는 형성평가를 모두 맞히고 요약을 통과한 학생에게만 보여요"><option value="basic" ${q.level !== 'adv' ? 'selected' : ''}>기본</option><option value="adv" ${q.level === 'adv' ? 'selected' : ''}>🚀 발전</option></select></span><button class="btn tiny danger tq-del" data-i="${i}">삭제</button></div>
       <label>질문 <input type="text" data-i="${i}" data-k="q" value="${esc(q.q)}" maxlength="200"></label>
       ${q.type === 'mc' ? `<div class="row-label">보기 (정답에 ● 표시)</div>${[0, 1, 2, 3].map(j => `<div style="display:flex;gap:6px;align-items:center;margin:4px 0"><input type="radio" name="ans${i}" value="${j}" ${q.answer === j ? 'checked' : ''}><input type="text" data-i="${i}" data-k="c${j}" value="${esc((q.choices || [])[j] || '')}" placeholder="보기 ${j + 1}" maxlength="60"></div>`).join('')}`
         : `<label>정답 (여러 개면 ; 로 구분) <input type="text" data-i="${i}" data-k="answers" value="${esc((q.answers || []).join(';'))}" maxlength="100"></label>`}
@@ -1155,7 +1204,7 @@ function renderTQList() {
   const sync = () => {
     $$('#tq-list input[data-i], #tq-list select[data-i]').forEach(el => {
       const q = list[+el.dataset.i], k = el.dataset.k; if (!q) return;
-      if (k === 'q' || k === 'hint') q[k] = el.value;
+      if (k === 'q' || k === 'hint' || k === 'level') q[k] = el.value;
       else if (k === 'answers') q.answers = el.value.split(';').map(x => x.trim()).filter(Boolean);
       else if (/^c\d$/.test(k)) { q.choices = q.choices || ['', '', '', '']; q.choices[+k[1]] = el.value; }
     });
@@ -1180,11 +1229,11 @@ function renderTQList() {
         const kept = (q.choices || []).map((c, j) => ({ c: String(c || '').trim(), j })).filter(x => x.c);
         const answer = kept.findIndex(x => x.j === q.answer);
         if (q.q.trim() && answer < 0) return toast(`"${q.q.slice(0, 15)}…" 문항의 정답 보기가 비어 있어요`, 'bad');
-        payload.push({ type: 'mc', q: q.q, choices: kept.map(x => x.c), answer, hint: q.hint, img: q.img || '', imgData: q.imgData || '' });
-      } else payload.push({ type: 'short', q: q.q, answers: q.answers || [], hint: q.hint, img: q.img || '', imgData: q.imgData || '' });
+        payload.push({ type: 'mc', q: q.q, choices: kept.map(x => x.c), answer, hint: q.hint, img: q.img || '', imgData: q.imgData || '', level: q.level === 'adv' ? 'adv' : 'basic' });
+      } else payload.push({ type: 'short', q: q.q, answers: q.answers || [], hint: q.hint, img: q.img || '', imgData: q.imgData || '', level: q.level === 'adv' ? 'adv' : 'basic' });
     }
     const r = await API.call({ action: 'saveQuestions', topicId: tAdmin.topicId, questions: payload }).catch(() => ({ ok: false, message: '연결 실패' }));
-    if (r.ok) { toast(`문항 ${r.count}개를 저장했어요`, 'ok'); tAdmin.source = 'sheet'; if (Array.isArray(r.questions)) { tAdmin.questions = r.questions.map(q => Object.assign({}, q)); renderTQList(); } const t = topicOf(tAdmin.topicId); if (t) t.questions = (Array.isArray(r.questions) ? r.questions : payload.filter(q => q.q.trim())).map(q => ({ type: q.type, q: q.q, choices: q.choices, img: q.img || '' })); if (study.step === 'quiz' && study.topic && study.topic.id === tAdmin.topicId) { study.answers = {}; study.graded = false; renderStudy(); } }
+    if (r.ok) { toast(`문항 ${r.count}개를 저장했어요`, 'ok'); tAdmin.source = 'sheet'; if (Array.isArray(r.questions)) { tAdmin.questions = r.questions.map(q => Object.assign({}, q)); renderTQList(); } const t = topicOf(tAdmin.topicId); if (t) { const all = (Array.isArray(r.questions) ? r.questions : payload.filter(q => q.q.trim())).map(q => ({ type: q.type, q: q.q, choices: q.choices, img: q.img || '', level: q.level })); t.questions = all.filter(q => q.level !== 'adv'); t.advQuestions = all.filter(q => q.level === 'adv'); } if (study.step === 'quiz' && study.topic && study.topic.id === tAdmin.topicId) { study.answers = {}; study.graded = false; renderStudy(); } }
     else toast(r.message || '저장에 실패했어요', 'bad');
   };
 }
@@ -1203,12 +1252,13 @@ function renderOnlineCard() {
   let card = $('#online-card');
   if (!card) { card = document.createElement('div'); card.id = 'online-card'; card.className = 'card'; card.style.background = '#ecfdf5'; $('#room-panel').insertBefore(card, $('#room-panel').firstChild); }
   const here = onlineList.filter(st => st.where === tUnit), other = onlineList.filter(st => st.where !== tUnit);
-  const chip = st => `<span class="chip online-chip" data-id="${esc(st.id)}" style="font-size:1rem;cursor:pointer" title="방 방문">${emojiFor(st.id)} ${esc(st.name)} <small class="muted">${esc(st.id)}</small></span>`;
+  const stepLabel = st => { const m = { 'study:units': '단원 고르는 중', 'study:topics': '성취기준 고르는 중', 'study:quiz': '📝 퀴즈 풀이', 'study:summary': '✍️ 요약 작성', 'study:result': '결과 확인', 'study:adv': '🚀 발전 문제', room: '🛋️ 방 꾸미기', shop: '🛒 상점', library: '📚 서재', friends: '🚪 친구 방', teacher: '교사 탭' }; const base = m[st.step] || (st.step ? st.step : '접속 중'); return base + (st.topic ? ' · ' + st.topic : '') + (st.step === 'study:summary' && st.len ? ` (${st.len}자)` : ''); };
+  const chip = st => `<span class="chip online-chip ${st.away ? 'away' : ''}" data-id="${esc(st.id)}" style="font-size:0.95rem;cursor:pointer" title="방 방문">${emojiFor(st.id)} ${esc(st.name)} <small class="muted">${esc(st.id)}</small> <small>· ${esc(stepLabel(st))}</small>${st.away ? ` <b style="color:#b91c1c">🙈 화면 이탈 ${st.awayFor}초</b>` : ''}${st.awayCount ? ` <small class="muted">(이탈 ${st.awayCount}회·총 ${st.awaySec}초)</small>` : ''}</span>`;
   card.innerHTML = `<h3>🟢 ${esc(tUnit ? unitTitle(tUnit) : '단원')}에서 활동 중 <small class="muted">${here.length}명 · 최근 5분</small></h3>` +
     (here.length ? `<div class="chips">${here.map(chip).join('')}</div>` : '<p class="muted small">이 단원에서 활동 중인 학생이 없어요.</p>') +
     `<div class="row-label" style="margin-top:10px">다른 단원·방 <small class="muted">${other.length}명</small></div>` +
-    (other.length ? `<div class="chips">${other.map(st => `<span class="chip online-chip" data-id="${esc(st.id)}" style="cursor:pointer">${emojiFor(st.id)} ${esc(st.name)} <small class="muted">${esc(st.where === 'home' ? '방 꾸미기' : (unitOf(st.where) ? unitTitle(st.where) : '접속 중'))}</small></span>`).join('')}</div>` : '<p class="muted small">없음</p>') +
-    `<p class="muted small" style="margin-top:8px">전체 접속 ${onlineList.length}명 · 1분마다 새로 확인해요. 이름을 누르면 그 학생 방에 들어가요.</p>`;
+    (other.length ? `<div class="chips">${other.map(st => `<span class="chip online-chip ${st.away ? 'away' : ''}" data-id="${esc(st.id)}" style="cursor:pointer">${emojiFor(st.id)} ${esc(st.name)} <small class="muted">${esc(unitOf(st.where) ? unitTitle(st.where) : '')} · ${esc(stepLabel(st))}</small>${st.away ? ` <b style="color:#b91c1c">🙈 ${st.awayFor}초</b>` : ''}</span>`).join('')}</div>` : '<p class="muted small">없음</p>') +
+    `<p class="muted small" style="margin-top:8px">전체 접속 ${onlineList.length}명 · 화면 이탈 중 ${onlineList.filter(s => s.away).length}명 · 15초마다 새로 확인해요. 🙈는 학생이 다른 탭·앱으로 나가 있다는 뜻이에요. 이름을 누르면 그 학생 방에 들어가요.</p>`;
   $$('#online-card .online-chip').forEach(el => el.onclick = () => { showScreen('friends'); visitFriend(el.dataset.id); });
 }
 /* ---------------- 교사: 실시간 제출 현황 (오늘) ---------------- */
@@ -1226,7 +1276,7 @@ async function pollFeed() {
     if ($('#screen-room').classList.contains('active')) renderFeedCard();
   } catch (e) { /* ignore */ }
 }
-function startFeed() { clearInterval(feedState.timer); feedState = { items: [], since: 0, timer: setInterval(pollFeed, 15000), showAll: false, lastSeen: 0 }; pollFeed(); }
+function startFeed() { clearInterval(feedState.timer); feedState = { items: [], since: 0, timer: setInterval(() => { pollFeed(); pollOnline(); }, 15000), showAll: false, lastSeen: 0 }; pollFeed(); }
 function fmtClock(t) { const d = new Date(t); return (d.getHours() < 10 ? '0' : '') + d.getHours() + ':' + (d.getMinutes() < 10 ? '0' : '') + d.getMinutes(); }
 function renderFeedCard() {
   if (!isTeacher()) return;
@@ -1239,7 +1289,7 @@ function renderFeedCard() {
   const row = e => `<div class="rec feed-row ${e.t > fresh ? 'fresh' : ''}" style="margin:6px 0">
       <div class="meta"><b>${fmtClock(e.t)}</b> <span class="feed-name" data-id="${esc(e.id)}" style="cursor:pointer">${emojiFor(e.id)} ${esc(e.name)} <small class="muted">${esc(e.id)}</small></span>
         <span class="muted">${esc(e.code || unitTitle(e.unitId))}</span>
-        ${e.kind === 'quiz' ? `<span class="tag">📝 퀴즈 ${e.quiz ? e.quiz.correct + '/' + e.quiz.total : ''}</span>` : `<span class="tag ${e.pass ? 'pass' : 'fail'}">${e.pass ? '✅ 요약 통과' : '🔁 재도전 ' + e.attempts + '회'}</span><span>${e.score}점</span><span>개념 ${e.opened}/${e.total}</span>${e.quiz ? `<span>퀴즈 ${e.quiz.correct}/${e.quiz.total}</span>` : ''}${e.coins ? `<span>🪙 +${e.coins}</span>` : ''}`}</div>
+        ${e.kind === 'adv' ? `<span class="tag pass">🚀 발전 문제 ${e.quiz ? e.quiz.correct + '/' + e.quiz.total : ''}</span>${e.coins ? `<span>🪙 +${e.coins}</span>` : ''}` : e.kind === 'quiz' ? `<span class="tag">📝 퀴즈 ${e.quiz ? e.quiz.correct + '/' + e.quiz.total : ''}</span>` : `<span class="tag ${e.pass ? 'pass' : 'fail'}">${e.pass ? '✅ 요약 통과' : '🔁 재도전 ' + e.attempts + '회'}</span><span>${e.score}점</span><span>개념 ${e.opened}/${e.total}</span>${e.quiz ? `<span>퀴즈 ${e.quiz.correct}/${e.quiz.total}</span>` : ''}${e.coins ? `<span>🪙 +${e.coins}</span>` : ''}`}</div>
       ${e.kind === 'submit' ? `<div class="text small">${esc(e.summary || '')}</div>` : ''}</div>`;
   card.innerHTML = `<h3>📡 실시간 제출 현황 <small class="muted">— 오늘 · 15초마다 갱신</small></h3>
     <div class="chips" style="margin:6px 0"><span class="chip">요약 제출 ${subs.length}</span><span class="chip">통과 ${passed.length}</span><span class="chip">참여 학생 ${students.size}명</span>
@@ -1274,7 +1324,7 @@ async function renderTeacherLibrary() {
   }
   const rows = tLib.rows.filter(r => !tLib.filter || r.unitId === tLib.filter);
   body.innerHTML = `<div class="card"><h2>📚 전체 학생 학습 정리 <small class="muted">${tLib.rows.length}건</small></h2>
-    <p class="muted small">학생들이 제출한 요약 전체예요(통과·재도전 모두). 점수와 열린 개념 수는 교사에게만 보여요.</p>
+    <p class="muted small">학생들이 제출한 요약이에요(통과·재도전 모두, 같은 날 같은 성취기준은 마지막 제출). 요약 색인 시트에서 바로 읽어 와요. 점수와 열린 개념 수는 교사에게만 보여요.</p>
     <div class="btn-row"><select id="tl-unit"><option value="">모든 단원</option>${units.map(u => `<option value="${esc(u.id)}" ${tLib.filter === u.id ? 'selected' : ''}>${esc(u.subject)} · ${esc(u.title)}</option>`).join('')}</select><button class="btn" id="tl-refresh">새로 고침</button></div></div>
     <div class="card">${rows.length ? rows.map(r => `<div class="rec"><div class="meta"><b>${emojiFor(r.id)} ${esc(r.name)} <small>${esc(r.id)}</small></b><span>${shortDate(r.date)}</span><span>${esc(unitTitle(r.unitId))}${topicCode(r.topicId) ? ' · ' + esc(topicCode(r.topicId)) : ''}</span>
       <span class="tag ${r.pass ? 'pass' : 'fail'}">${r.pass ? '통과' : '재도전'}</span><span>${r.score}점</span><span>개념 ${r.opened}개</span><span>퀴즈 ${r.quiz || '-'}</span><span>${r.attempts}회</span></div><div class="text">${esc(r.summary)}</div></div>`).join('') : '<p class="muted">기록이 없어요.</p>'}</div>`;
@@ -1390,7 +1440,7 @@ function start() {
   updateHeader(); checkLocks();
   $('#logout-btn').classList.toggle('hidden', MODE !== 'server');
   $('#tab-friends').classList.toggle('hidden', MODE !== 'server');
-  if (MODE === 'server') { API.flush(); pollInbox(); clearInterval(pollTimer); pollTimer = setInterval(pollInbox, 60000); if (isTeacher()) startFeed(); }
+  if (MODE === 'server') { API.flush(); pollInbox(); clearInterval(pollTimer); pollTimer = setInterval(pollInbox, 60000); if (isTeacher()) startFeed(); else { clearInterval(pingTimer); pingTimer = setInterval(sendPing, 20000); } }
   showScreen(state.records.length ? 'room' : 'study');
 }
 async function init() {

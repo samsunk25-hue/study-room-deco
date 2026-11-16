@@ -22,9 +22,10 @@
  *  ■ 원칙: 학생 데이터는 이 폴더 밖으로 나가지 않는다. (외부 AI 호출 없음 — 판정은 judge.gs 규칙)
  * ===================================================================== */
 
-const SHEETS = { accounts: '학생계정', teachers: '교사', units: '단원', questions: '문항', records: '평가기록부', approvals: '승인요청', past: '지난계정', social: '소셜' };
+const SHEETS = { accounts: '학생계정', teachers: '교사', units: '단원', questions: '문항', records: '평가기록부', approvals: '승인요청', past: '지난계정', social: '소셜', index: '요약색인' };
+const INDEX_HEADER = ['시각', '학번', '이름', '날짜', '성취기준ID', '단원ID', '통과', '점수', '시도', '개념수', '퀴즈', '요약'];
 // 문항 시트: 한 행 = 문항 하나. 성취기준ID 는 단원 시트의 단원ID(예: sci2_14_02). 이 시트에 행이 있는 성취기준은 단원 시트의 문항 칸 대신 이 행들을 사용
-const QUESTION_HEADER = ['성취기준ID', '유형(객관식/단답형)', '질문', '보기1', '보기2', '보기3', '보기4', '정답(객관식: 번호 1~4 / 단답형: 정답1;정답2)', '힌트', '사용', '그림파일ID'];
+const QUESTION_HEADER = ['성취기준ID', '유형(객관식/단답형)', '질문', '보기1', '보기2', '보기3', '보기4', '정답(객관식: 번호 1~4 / 단답형: 정답1;정답2)', '힌트', '사용', '그림파일ID', '난이도(기본/발전)'];
 const COUPON_HEADER = ['쿠폰ID', '이름', '코인', '설명', '사용'];
 SHEETS.coupons = '쿠폰';
 
@@ -300,11 +301,11 @@ function saveItems_(acc, body) {
 }
 
 /* ---- 가격·보상 (교사가 앱에서 설정) ---- */
-const PRICE_KEYS = ['common', 'rare', 'epic', 'recolor', 'restyle', 'wallpaper', 'photoFrame', 'conceptCoin', 'quizCoin', 'passCoin', 'firstTryBonus', 'monsterBonus', 'stickerCoin'];
+const PRICE_KEYS = ['common', 'rare', 'epic', 'recolor', 'restyle', 'wallpaper', 'photoFrame', 'conceptCoin', 'quizCoin', 'passCoin', 'firstTryBonus', 'monsterBonus', 'advCoin', 'advBonus', 'stickerCoin'];
 function defaultPricing_() {
   const sp = CONFIG.shopPrice || { common: 80, rare: 160, epic: 320 }, rw = CONFIG.rewards || {};
   return { common: sp.common, rare: sp.rare, epic: sp.epic, recolor: CONFIG.recolorCost, restyle: CONFIG.restyleCost, wallpaper: CONFIG.wallpaperCost, photoFrame: ITEMS.photo_frame.cost,
-    conceptCoin: rw.conceptCoin, quizCoin: rw.quizCoin, passCoin: rw.passCoin, firstTryBonus: rw.firstTryBonus, monsterBonus: rw.monsterBonus, stickerCoin: (CONFIG.sticker || {}).coin };
+    conceptCoin: rw.conceptCoin, quizCoin: rw.quizCoin, passCoin: rw.passCoin, firstTryBonus: rw.firstTryBonus, monsterBonus: rw.monsterBonus, advCoin: rw.advCoin, advBonus: rw.advBonus, stickerCoin: (CONFIG.sticker || {}).coin };
 }
 let pricingDefaults_ = null;
 function pricing_() {
@@ -317,7 +318,7 @@ function pricing_() {
 function applyPricing_(p) {
   CONFIG.shopPrice = { common: p.common, rare: p.rare, epic: p.epic };
   CONFIG.recolorCost = p.recolor; CONFIG.restyleCost = p.restyle; CONFIG.wallpaperCost = p.wallpaper; ITEMS.photo_frame.cost = p.photoFrame;
-  CONFIG.rewards = Object.assign({}, CONFIG.rewards, { conceptCoin: p.conceptCoin, quizCoin: p.quizCoin, passCoin: p.passCoin, firstTryBonus: p.firstTryBonus, monsterBonus: p.monsterBonus });
+  CONFIG.rewards = Object.assign({}, CONFIG.rewards, { conceptCoin: p.conceptCoin, quizCoin: p.quizCoin, passCoin: p.passCoin, firstTryBonus: p.firstTryBonus, monsterBonus: p.monsterBonus, advCoin: p.advCoin, advBonus: p.advBonus });
   CONFIG.sticker = Object.assign({}, CONFIG.sticker, { coin: p.stickerCoin });
 }
 /** 학생 앱에도 내려가는 공개 설정 */
@@ -649,11 +650,11 @@ function loadUnits_() {
   const units = rows.filter(r => r[0] && r[2] && r[8] !== false).map(parseUnit_).filter(Boolean);
   // 문항 시트에 행이 있는 성취기준은 그 행들을 문항으로 사용 (교사가 수정·추가·삭제한 결과)
   const qmap = questionMap_();
-  units.forEach(u => { if (qmap[u.id] && qmap[u.id].length) u.questions = qmap[u.id]; });
+  units.forEach(u => { if (qmap[u.id] && qmap[u.id].length) u.questions = qmap[u.id]; const all = u.questions || []; u.questions = all.filter(q => q.level !== 'adv'); u.advQuestions = all.filter(q => q.level === 'adv'); });   // 발전 문제는 따로
   cache_().put('units', JSON.stringify(units), 300);
   return units.map(reviveUnit_);
 }
-function qsheet_() { const sh = sheet_(SHEETS.questions, QUESTION_HEADER); if (sh.getLastColumn() < QUESTION_HEADER.length) sh.getRange(1, 11).setValue(QUESTION_HEADER[10]); return sh; }
+function qsheet_() { const sh = sheet_(SHEETS.questions, QUESTION_HEADER); if (sh.getLastColumn() < QUESTION_HEADER.length) sh.getRange(1, 11, 1, 2).setValues([[QUESTION_HEADER[10], QUESTION_HEADER[11]]]); return sh; }
 /** 문항 시트 → { 성취기준ID: [question...] } ('사용' 꺼진 행 제외) */
 function questionMap_() {
   const sh = qsheet_(); const n = sh.getLastRow();
@@ -682,7 +683,7 @@ function parseQuestionRow_(r) {
     const choices = [r[3], r[4], r[5], r[6]].map(cellStr_).filter(Boolean);
     const ans = Number(r[7]) - 1;
     if (choices.length < 2 || !(ans >= 0 && ans < choices.length)) return null;
-    return { type: 'mc', q: text, choices, answer: ans, hint: cellStr_(r[8]), img: cellStr_(r[10]) };
+    return { type: 'mc', q: text, choices, answer: ans, hint: cellStr_(r[8]), img: cellStr_(r[10]), level: /발전/.test(cellStr_(r[11])) ? 'adv' : 'basic' };
   }
   if (/^단답형/.test(type)) {
     const answers = cellStr_(r[7]).split(';').map(x => x.trim()).filter(Boolean);
@@ -695,12 +696,12 @@ function parseQuestionRow_(r) {
 function textFormatQuestionRange_(sh, startRow, count) {
   sh.getRange(startRow, 1, count, 7).setNumberFormat('@');   // ID·유형·질문·보기1~4
   sh.getRange(startRow, 9, count, 1).setNumberFormat('@');   // 힌트
-  sh.getRange(startRow, 11, count, 1).setNumberFormat('@');  // 그림파일ID
+  sh.getRange(startRow, 11, count, 2).setNumberFormat('@');  // 그림파일ID·난이도
 }
 function questionToRow_(id, q) {
   return q.type === 'mc'
-    ? [id, '객관식', q.q, q.choices[0] || '', q.choices[1] || '', q.choices[2] || '', q.choices[3] || '', q.answer + 1, q.hint || '', true, q.img || '']
-    : [id, '단답형', q.q, '', '', '', '', (q.answers || []).join(';'), q.hint || '', true, q.img || ''];
+    ? [id, '객관식', q.q, q.choices[0] || '', q.choices[1] || '', q.choices[2] || '', q.choices[3] || '', q.answer + 1, q.hint || '', true, q.img || '', q.level === 'adv' ? '발전' : '기본']
+    : [id, '단답형', q.q, '', '', '', '', (q.answers || []).join(';'), q.hint || '', true, q.img || '', q.level === 'adv' ? '발전' : '기본'];
 }
 /** 특정 성취기준의 문항 행을 모두 교체 (교사 편집기 저장 / 예시 채우기) — 호출자가 잠금을 잡고 있어야 함 */
 function replaceQuestionRows_(id, questions) {
@@ -718,7 +719,7 @@ function replaceQuestionRows_(id, questions) {
 function questionsFor_(acc, body) {
   if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
   const u = loadUnits_().find(x => x.id === body.topicId); if (!u) return fail_('no_unit', '성취기준을 찾을 수 없어요');
-  return { ok: true, topicId: u.id, questions: u.questions, source: questionMap_()[u.id] ? 'sheet' : 'unit' };
+  return { ok: true, topicId: u.id, questions: (u.questions || []).concat(u.advQuestions || []), source: questionMap_()[u.id] ? 'sheet' : 'unit' };
 }
 /** 교사 편집기: 문항 저장(수정·추가·삭제 결과 전체를 받아 문항 시트에 반영) */
 function saveQuestions_(acc, body) {
@@ -733,14 +734,15 @@ function saveQuestions_(acc, body) {
       const choices = (q.choices || []).map(x => String(x || '').trim()).filter(Boolean).slice(0, 4);
       const ans = Number(q.answer);
       if (choices.length < 2 || !(ans >= 0 && ans < choices.length)) return fail_('bad_q', '객관식은 보기 2개 이상과 정답 번호가 필요해요: ' + text.slice(0, 20));
-      clean.push({ type: 'mc', q: text, choices, answer: ans, hint: String(q.hint || '').trim(), img: questionImage_(id, q) });
+      clean.push({ type: 'mc', q: text, choices, answer: ans, hint: String(q.hint || '').trim(), img: questionImage_(id, q), level: q.level === 'adv' ? 'adv' : 'basic' });
     } else {
       const answers = (q.answers || []).map(x => String(x || '').trim()).filter(Boolean);
       if (!answers.length) return fail_('bad_q', '단답형은 정답이 1개 이상 필요해요: ' + text.slice(0, 20));
-      clean.push({ type: 'short', q: text, answers, hint: String(q.hint || '').trim(), img: questionImage_(id, q) });
+      clean.push({ type: 'short', q: text, answers, hint: String(q.hint || '').trim(), img: questionImage_(id, q), level: q.level === 'adv' ? 'adv' : 'basic' });
     }
   }
-  if (clean.length > 10) return fail_('too_many', '문항은 성취기준당 10개까지예요');
+  if (clean.filter(q => q.level !== 'adv').length > 10) return fail_('too_many', '기본 문항은 성취기준당 10개까지예요');
+  if (clean.filter(q => q.level === 'adv').length > 10) return fail_('too_many', '발전 문항은 성취기준당 10개까지예요');
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return fail_('busy', '지금 접속이 많아요. 잠시 후 다시 시도해 주세요');
   try { replaceQuestionRows_(id, clean); } finally { lock.releaseLock(); }
@@ -793,7 +795,7 @@ function parseUnit_(r) {
 }
 function publicUnits_(units) {
   return units.map(u => ({ id: u.id, unitId: u.unitId, code: u.code, subject: u.subject, title: u.title, standard: u.standard, conceptCount: u.keyConcepts.length,
-    questions: u.questions.map(q => ({ type: q.type, q: q.q, choices: q.choices, img: q.img || '' })) }));
+    questions: u.questions.map(q => ({ type: q.type, q: q.q, choices: q.choices, img: q.img || '' })), advQuestions: (u.advQuestions || []).map(q => ({ type: q.type, q: q.q, choices: q.choices, img: q.img || '' })) }));
 }
 
 /* ======================= 승인 (사진/쿠폰) ======================= */
@@ -919,11 +921,14 @@ function sticker_(acc, body, today) {
   return { ok: true, coins: state.coins, message: msg };
 }
 /* ---- 접속 중 학생 (교사 내 방에 표시): 학생 요청마다 캐시에 시각 기록, 최근 5분 이내를 접속 중으로 봄 ---- */
-function touchOnline_(acc, where) {
+function touchOnline_(acc, where, pres) {
   try {
     const c = cache_(); const now = Date.now();
     const map = JSON.parse(c.get('online') || '{}');
-    map[acc.id] = { t: now, where: String(where || '').slice(0, 40) };
+    const prev = (map[acc.id] && typeof map[acc.id] === 'object') ? map[acc.id] : {};
+    const p = pres && typeof pres === 'object' ? pres : {};
+    const away = !!p.away; const awayCount = (prev.awayCount || 0) + (away && !prev.away ? 1 : 0);
+    map[acc.id] = { t: now, where: String(where || '').slice(0, 40), step: String(p.step || '').slice(0, 30), topic: String(p.topic || '').slice(0, 20), len: Number(p.len) || 0, away, awayAt: away ? (prev.away && prev.awayAt ? prev.awayAt : now) : 0, awayCount, awaySec: (prev.awaySec || 0) + (prev.away && prev.t ? Math.round((now - prev.t) / 1000) : 0) };
     Object.keys(map).forEach(k => { const t = typeof map[k] === 'number' ? map[k] : map[k].t; if (now - t > 600000) delete map[k]; });
     c.put('online', JSON.stringify(map), 1200);
   } catch (e) { /* ignore */ }
@@ -933,13 +938,49 @@ function online_(acc) {
   const now = Date.now(); const map = JSON.parse(cache_().get('online') || '{}');
   const names = {}; accountRows_().forEach(r => names[String(r[ACC.id])] = r[ACC.name]);
   const ent = id => (typeof map[id] === 'number' ? { t: map[id], where: '' } : map[id]);
-  const students = Object.keys(map).filter(id => now - ent(id).t < 300000 && names[id]).sort().map(id => ({ id, name: names[id], seen: ent(id).t, where: ent(id).where || '' }));
+  const students = Object.keys(map).filter(id => now - ent(id).t < 300000 && names[id]).sort().map(id => { const e = ent(id); return { id, name: names[id], seen: e.t, where: e.where || '', step: e.step || '', topic: e.topic || '', len: e.len || 0, away: !!e.away, awayFor: e.away && e.awayAt ? Math.round((now - e.awayAt) / 1000) : 0, awayCount: e.awayCount || 0, awaySec: (e.awaySec || 0) + (e.away && e.t ? Math.round((now - e.t) / 1000) : 0) }; });
   return { ok: true, students };
 }
-/* ---- 전체 학생 학습 정리 (교사 서재) ---- */
+/* ---- 요약 색인 (제출 때마다 한 행 추가 → 교사 서재가 학생 파일을 모두 읽지 않아도 됨) ---- */
+function indexRow_(id, name, x) {
+  return [Date.now(), String(id), name, x.date, x.topicId || x.unitId, x.unitId, !!x.pass, x.score || 0, x.attempts || 0, (x.opened || x.hits || []).length, x.quiz ? x.quiz.correct + '/' + x.quiz.total : '', String(x.summary || '').slice(0, 600)];
+}
+function indexAppend_(acc, cmd, result, units, today) {
+  const topic = units.find(t => t.id === (cmd.topicId || cmd.unitId)) || {};
+  const rec = result.record || {}, res = result.res || {}, oc = result.outcome || {};
+  const sh = sheet_(SHEETS.index, INDEX_HEADER);
+  sh.appendRow(indexRow_(acc.id, acc.name, { date: today, topicId: topic.id, unitId: topic.unitId, pass: !!res.pass, score: res.score || 0, attempts: rec.attempts || 1, opened: rec.opened || [], quiz: result.quiz ? { correct: result.quiz.filter(x => x.ok).length, total: result.quiz.length } : null, summary: cmd.text }));
+  cache_().remove('allsum');
+}
+/** 색인이 비어 있으면(처음 한 번) 학생 파일 전체로 만든다 */
+function rebuildIndex_() {
+  const sh = sheet_(SHEETS.index, INDEX_HEADER); const out = [];
+  accountRows_().forEach(r => {
+    try { const st = JSON.parse(DriveApp.getFileById(r[ACC.fileId]).getBlob().getDataAsString('UTF-8')); (st.records || []).forEach(x => out.push(indexRow_(r[ACC.id], r[ACC.name], x))); } catch (e) { /* 파일 없음 */ }
+  });
+  if (out.length) { sh.getRange(2, 1, out.length, INDEX_HEADER.length).setValues(out); sh.getRange(2, 2, out.length, 1).setNumberFormat('@'); }
+  return out.length;
+}
+function indexRows_(withSummary, maxRows) {
+  const sh = sheet_(SHEETS.index, INDEX_HEADER); let n = sh.getLastRow();
+  if (n < 2) { rebuildIndex_(); n = sh.getLastRow(); if (n < 2) return []; }
+  const start = maxRows ? Math.max(2, n - maxRows + 1) : 2;
+  const vals = sh.getRange(start, 1, n - start + 1, withSummary ? INDEX_HEADER.length : 11).getValues();
+  const map = {};   // 같은 학생·성취기준·날짜는 마지막 제출만
+  vals.forEach(v => { const key = String(v[1]) + '|' + v[4] + '|' + cellStr_(v[3]); map[key] = v; });
+  return Object.values(map).map(v => ({ id: String(v[1]), name: String(v[2] || ''), date: cellStr_(v[3]), topicId: String(v[4] || ''), unitId: String(v[5] || ''), pass: v[6] === true || v[6] === 'TRUE', score: Number(v[7]) || 0, attempts: Number(v[8]) || 0, opened: Number(v[9]) || 0, quiz: String(v[10] || ''), summary: withSummary ? String(v[11] || '') : '' }));
+}
+/* ---- 전체 학생 학습 정리 (교사 서재) — 요약 색인 시트에서 ---- */
 function allSummaries_(acc) {
   if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
   const c = cache_().get('allsum'); if (c) return { ok: true, rows: JSON.parse(c), cached: true };
+  const rows = indexRows_(true, 3000);
+  rows.sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id));
+  const out = rows.slice(0, 1000);
+  try { cache_().put('allsum', JSON.stringify(out), 60); } catch (e) { /* 100KB 초과 시 캐시 생략 */ }
+  return { ok: true, rows: out };
+}
+function allSummariesLegacy_(acc) {
   const rows = [];
   accountRows_().forEach(r => {
     try {
@@ -956,7 +997,13 @@ function allSummaries_(acc) {
 /* ---- 단원별 활동 시작 학생 수 (기록이 하나라도 있는 학생) — allSummaries 캐시 재사용 ---- */
 function unitStats_(acc) {
   if (!acc.teacher) return fail_('forbidden', '교사만 사용할 수 있어요');
-  const rows = allSummaries_(acc).rows || []; const sets = {};
+  const rows = indexRows_(false, 0); const sets = {};   // 색인 전체(요약 제외)로 단원별 시작 학생 수
+  rows.forEach(r => { (sets[r.unitId] = sets[r.unitId] || {})[r.id] = true; });
+  const stats = {}; Object.keys(sets).forEach(k => stats[k] = Object.keys(sets[k]).length);
+  return { ok: true, stats, students: new Set(rows.map(r => r.id)).size };
+}
+function unitStatsUnused_() {
+  const rows = indexRows_(false, 0); const sets = {};
   rows.forEach(r => { (sets[r.unitId] = sets[r.unitId] || {})[r.id] = true; });
   const stats = {}; Object.keys(sets).forEach(k => stats[k] = Object.keys(sets[k]).length);
   return { ok: true, stats, students: new Set(rows.map(r => r.id)).size };
@@ -993,10 +1040,11 @@ function doPost(e) {
     if (a === 'login') return json_(login_(body, today));
     const id = tokenId; if (!id) return json_(fail_('auth', '다시 로그인해 주세요'));
     const acc = account_(id); if (!acc) return json_(fail_('auth', '계정을 찾을 수 없어요'));
-    if (!acc.teacher) touchOnline_(acc, body.where);
+    if (!acc.teacher) touchOnline_(acc, body.where, body.pres);
     switch (a) {
       case 'online': return json_(online_(acc));                         // 교사 전용
       case 'feed': return json_(feed_(acc, body));                        // 교사 전용 (실시간 제출 현황)
+      case 'ping': return json_({ ok: true });                            // 학생: 학습 단계·화면 이탈 신호 (touchOnline_ 에서 기록)
       case 'unitStats': return json_(unitStats_(acc));                   // 교사 전용
       case 'seedTest': return json_(seedTest_(acc, body, today));          // 교사 전용 (테스트 자료)
       case 'grantCoins': return json_(grantCoins_(acc, body));           // 교사 전용 (코인 일괄 지급)
@@ -1072,7 +1120,12 @@ function command_(acc, cmd, today) {
   flushPendingApprovals_(acc, state);
   if (acc.teacher) state.coins = 999999;   // 교사는 코인 무제한
   saveState_(acc, state);
-  if (cmd.type === 'submit' && !acc.teacher && r.result) {   // 교사 실시간 현황용
+  if (cmd.type === 'advQuiz' && !acc.teacher && r.result) {
+    const topic = units.find(t => t.id === cmd.topicId) || {};
+    try { feedPush_({ t: Date.now(), kind: 'adv', id: acc.id, name: acc.name, topicId: topic.id || '', unitId: topic.unitId || '', code: topic.code || '', quiz: { correct: r.result.correct, total: r.result.total }, coins: r.result.coins || 0 }); } catch (e) { /* 무시 */ }
+  }
+  if (cmd.type === 'submit' && !acc.teacher && r.result) {   // 교사 실시간 현황용 + 요약 색인
+    try { indexAppend_(acc, cmd, r.result, units, today); } catch (e) { /* 색인 실패는 무시 (평가기록부에는 남음) */ }
     const res = r.result.res || {}, oc = r.result.outcome || {}, rec = r.result.record || {}, topic = units.find(t => t.id === (cmd.topicId || cmd.unitId)) || {};
     try { feedPush_({ t: Date.now(), kind: 'submit', id: acc.id, name: acc.name, topicId: topic.id || '', unitId: topic.unitId || '', code: topic.code || '', pass: !!res.pass, score: res.score || 0, attempts: rec.attempts || 1,
       quiz: (oc && r.result.quiz) ? { correct: r.result.quiz.filter(x => x.ok).length, total: r.result.quiz.length } : null, opened: oc.opened || 0, total: oc.total || 0, coins: oc.coins || 0, summary: String(cmd.text || '').slice(0, 220) }); } catch (e) { /* 피드 실패는 무시 */ }
